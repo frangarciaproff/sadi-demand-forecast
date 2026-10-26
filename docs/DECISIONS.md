@@ -139,3 +139,13 @@
 - Change: SPEC v0.5 values confirmed by Fran: issue time 10:00 ART on D-1; T1/T2 defined on net demand.
 - Evidence: CAMMESA forecasts are never model inputs, so issue time affects comparison fairness, not leakage. The day-ahead programme for D appears ~21:30 ART on D-1, after the issue time. Net demand matches what CAMMESA programmes (B1).
 - Previous state: both set provisionally in SPEC v0.5.
+
+## 2026-10-25 — Finding: weekly balance.txt is stale; O9/O10 need other sources
+- Change: D5 balance.txt discarded. O9 (net demand) checked against D1 gross energy instead; O10 (load shedding / FALLAS) has no source yet. Parsing rules for SEwwarea.dem recorded in docs/data_inventory.md (section boundaries, fixed-width slicing, overflow fields).
+- Evidence: identical balance.txt (same sha256, file date 2016-09-21) in all 98 sampled weekly zips 2016–2025. Area-sum / D1-gross ratio medians 0.93–0.95 but with tails > 1, unresolved.
+- Previous state: balance.txt assumed to hold weekly net/gross demand and FALLAS (statement made 2026-10-23, incorrect).
+
+## 2026-10-25 — Parsers for D5 and D6; B1 source switch date (proposed)
+- Change: src/sadi_forecast/parsing.py with tests on synthetic fragments. Rules: fixed-width slicing, section boundaries, overflow fields, unmarked rows treated as missing (never summed), weekly files split at month boundaries. Proposed for B1: balance.txt through target day 2024-11-12, BALANCE.csv from 2024-11-13; the definitional step (~+0.15 %) falls in validation and is documented; the test period is CSV only.
+- Evidence: 252/252 weekly files consistent with their day range; 45 unmarked zero-filled rows; CSV vs txt overlap differences documented in data_inventory.md.
+- Previous state: no parsers; B1 format rule undefined.
