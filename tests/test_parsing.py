@@ -18,11 +18,9 @@ from sadi_forecast.parsing import (
 
 
 def _row(date: str, flag: str, values: list[str]) -> str:
-    return (
-        f"{date} {flag}"
-        + "".join(v.rjust(8) for v in values)
-        + "   9999.999  0.0  0.0  0.0  0.0 21:00"
-    )
+    # Real layout: "dd/mm F " then 24 right-aligned 8-character fields from column 8
+    tail = "   9999.999  0.0  0.0  0.0  0.0 21:00"
+    return f"{date} {flag} " + "".join(v.rjust(8) for v in values) + tail
 
 
 HOURS = [f"{100 + k:.2f}" for k in range(24)]
