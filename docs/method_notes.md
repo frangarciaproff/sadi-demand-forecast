@@ -1,3 +1,7 @@
+> Superseded in part (2026-10-29): written before SPEC v0.6. Targets, information set
+> (actuals ≤ D-2 and the single D-7 reference below are outdated), data sources and the
+> validity check are defined in SPEC v0.7, which wins where the two disagree.
+
 # Method notes — open decisions for SPEC section 4
 
 Source: Fran's method discussion (2026-10-23), with review comments marked [Review].

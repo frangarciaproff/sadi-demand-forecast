@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 
 import pandas as pd
+import pytest
 
 from sadi_forecast.targets import definitive_daily, provisional_daily
 
@@ -43,11 +44,12 @@ def test_complement_closest_to_d7_wins_and_far_ones_are_flagged() -> None:
         _supply(D1, 1001.0, 10.0) + _supply(D2, 998.2, 0.0) + _supply(D3, 1000.0, 0.0)
     )
     out = definitive_daily(_postop(), supply).set_index("date")
-    assert out["target_mwh"].to_dict()[D1] == 991.0
+    assert out["target_mwh"].to_dict()[D1] == pytest.approx(991.0)
     assert out["supply_mwh"].to_dict()[D2] == 998.0
     assert out["n_complements"].to_dict()[D2] == 2
     assert out["flag"].to_dict()[D3] == "complement_far_from_d7"
-    assert pd.isna(out["target_mwh"].to_dict()[D3])
+    # The flag is a quality indicator: the target still comes from D7.
+    assert out["target_mwh"].to_dict()[D3] == pytest.approx(1000.0)
 
 
 def test_without_d7_the_complement_closest_to_the_daily_report_is_provisional() -> None:
@@ -63,3 +65,12 @@ def test_provisional_subtracts_programmed_exports() -> None:
     )
     out = provisional_daily(_postop(), b1).set_index("date")
     assert out["provisional_mwh"].to_dict()[D1] == 975.0
+
+
+def test_definitive_labels_follow_the_monthly_publication() -> None:
+    from sadi_forecast.targets import definitive_available_until
+
+    # Before the 20th the previous month is not yet published.
+    assert definitive_available_until(dt.date(2024, 11, 5)) == dt.date(2024, 9, 30)
+    assert definitive_available_until(dt.date(2024, 11, 20)) == dt.date(2024, 10, 31)
+    assert definitive_available_until(dt.date(2025, 1, 10)) == dt.date(2024, 11, 30)

@@ -1,0 +1,42 @@
+{
+  "training": {
+    "B0_seasonal_naive": {
+      "n_days": 2450,
+      "mape_pct": 8.536,
+      "mae_gwh": 33.166,
+      "bias_pct": 0.576,
+      "spread_sd_pct": 11.299,
+      "p90_abs_pct": 18.371
+    },
+    "B1_operator_programme": {
+      "n_days": 2453,
+      "mape_pct": 2.804,
+      "mae_gwh": 10.871,
+      "bias_pct": 2.056,
+      "spread_sd_pct": 3.214,
+      "p90_abs_pct": 5.811
+    },
+    "common_days": 2439,
+    "B0_missing_days": 15
+  },
+  "validation": {
+    "B0_seasonal_naive": {
+      "n_days": 365,
+      "mape_pct": 9.068,
+      "mae_gwh": 36.078,
+      "bias_pct": 2.275,
+      "spread_sd_pct": 12.212,
+      "p90_abs_pct": 18.965
+    },
+    "B1_operator_programme": {
+      "n_days": 358,
+      "mape_pct": 3.388,
+      "mae_gwh": 13.688,
+      "bias_pct": 2.979,
+      "spread_sd_pct": 3.053,
+      "p90_abs_pct": 6.602
+    },
+    "common_days": 358,
+    "B0_missing_days": 0
+  }
+}

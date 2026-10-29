@@ -18,3 +18,4 @@ out.json
 mlruns/
 *.egg-info/
 docs/personal_comments.md
+node_modules/

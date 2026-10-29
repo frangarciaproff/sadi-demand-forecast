@@ -74,7 +74,9 @@ def main() -> int:
 
     days = latest_daily(hourly).set_index("date")
     # Bases from 2024-12 omit total demand: take it from the latest base that has it.
-    with_total = ok.dropna(subset=["total_mwh"]).groupby("date").last()
+    with_total = (
+        ok.dropna(subset=["total_mwh"]).groupby("date").tail(1).set_index("date")
+    )
     days["total_mwh"] = with_total["total_mwh"]
     days["total_base"] = with_total["base"]
     b1 = b1_daily(pd.read_parquet(INTERIM / "d6_programme_hourly.parquet"))

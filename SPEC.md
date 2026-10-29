@@ -1,9 +1,9 @@
 # SPEC — sadi-demand-forecast
 
-Status: DRAFT v0.6 (2026-10-27). Not agreed. v0.6: target definition and source (O13 closed),
-live data handling (validity check, replacement, multiple complements). v0.5 was rewritten after
-the 2026-10-24 audit to remove contradictions with docs/DECISIONS.md. Open method decisions are tracked in docs/method_notes.md;
-deferred lines in docs/ROADMAP.md. No modelling code until sections 1, 4 and 5 are agreed.
+Status: v0.7 (2026-10-29), frozen until backtest results. v0.7 applies the 2026-10-29 audit
+(label embargo in refits, backtest start, four-week reference level, scoring caveats, S4).
+v0.6: target definition and source, live data handling. Where docs/method_notes.md (written
+before v0.6) disagrees with this file, this file wins. Deferred lines in docs/ROADMAP.md.
 Owner: Francisco J. García Soriano. License (code only): MIT.
 
 ## 1. Problem
@@ -28,10 +28,13 @@ operator's forecast cannot leak into the model.
 
 Information set at issue time:
 - Actuals published before the issue time, by archived publication timestamp. The daily report for
-  day X appears on X+1 between 18:00 and 21:00 ART, and Friday–Sunday reports on Monday or Tuesday,
-  so the newest actual is D-3 on Tuesday–Friday issue days and older on Saturday–Monday issue days.
-  Backtests reproduce this from the archived listings (horizon ≥ 3).
-- Calendar of D.
+  day X usually appears on X+1 between 18:00 and 21:00 ART, but Friday–Sunday reports often
+  appear together on Monday or Tuesday, and holidays delay them too. The newest actual is
+  therefore D-3 at best and up to D-6 after weekends; the rule that runs is the timestamp, not
+  the weekday. Backtests reproduce this from the archived listings (horizon ≥ 3; lag features
+  lag_3 … lag_28, each the latest valid version published before the issue time).
+- Calendar of D: national holidays, decreed bridge days, Holy Thursday and 24/31 December
+  (package `holidays`, Argentina), plus the categories of D-1 and D+1.
 - Weather forecasts from runs initialised at least 48 h before each valid hour of D (previous_day2).
 
 ## 2. Data
@@ -64,25 +67,27 @@ and 0.00–0.07 % (2020 →).
 
 ### 2.2 Version rules (leakage control)
 
-- Definitive target (training, definitive scoring): D8 complement supply − D7 actual exports.
+- Definitive target (training, definitive scoring): D7 supply − D7 exports (the operator's
+  consolidated balance; Fran 2026-10-28). The D8 complement is a quality check of it
+  (median difference 0.003 % on training days).
 - Provisional actual (live scoring, lag features): latest D8 daily report that passes the validity
   check − D6 programmed exports for that day. Marked "provisional" wherever it is shown.
 - Replacement: when the D8 complement for a day is published, it replaces the provisional supply;
   when the D7 base covering the day is published, D7 exports replace programmed exports. Every
   stored value keeps its source and publication time; scores are recomputed and both provisional
   and definitive scores are kept.
-- Multiple complements for one day (e.g. 2020-03-10 for 2020-02-15: 398,161 and 410,255 MWh):
-  once D7 covers the day, the complement closest to D7 supply is used (it must be within 0.2 %,
-  otherwise the day is flagged and excluded from targets); before that, the complement closest to
-  the latest valid daily report is used provisionally and flagged. Publication order is not used
-  (in the 2020-02-15 case the later complement is the wrong one).
-- Validity check of a daily report (before it is used anywhere): with provisional value
-  v = daily-report supply − programmed exports, the day is valid if |v / B1 total − 1| ≤ k1 and
-  |v / median of the same weekday in the previous 4 valid weeks − 1| ≤ k2. k1 and k2 are set on the training period as the 99.5th percentiles of the same
-  ratios computed with complements, and frozen before validation. Observed gross errors of daily
-  reports: 2022-05-15 +6.8 %, 2022-08-15 +32 % (re-issued next morning), 2023-11-14 +2.7 %.
-  An invalid day is treated as missing until a later version passes the check. Backtests apply
-  the same check to the archived daily reports.
+- Multiple complements for one day (only matters before D7 covers the day): the complement
+  closest to the latest valid daily report is used provisionally and flagged. Publication
+  order is not used. The operating day of a D8 file is read from its database (table
+  FECHA), not from the listing: 24 of 6,926 files sit under another day's listing entry.
+- Validity check of a daily report (before it is used anywhere; O14 closed 2026-10-28):
+  with provisional value v = daily-report supply − programmed exports, the report is valid
+  if it has 24 hours, positive supply and |v / B1 total − 1| ≤ 0.10 (the 99th percentile of
+  the same ratio with definitive values on training days, 0.0995; Fran chose 10 %). On the
+  training days this rejects 44 of 2,542 daily reports and catches 16 of the 69 reports
+  that are more than 2 % off their complement; the remaining report errors are not
+  detectable before the complement and are carried, as published, into backtest lags.
+  An invalid report is treated as missing until a later version passes.
 - Features: the version available at issue time, from archived publication timestamps.
 - B1: the last D6 file for target day D published before 00:00 ART on D. Re-publications on D or
   later are excluded. The "latest publication" rule never applies to D6.
@@ -93,8 +98,11 @@ and 0.00–0.07 % (2020 →).
 
 - D8 daily report vs complement: median absolute difference ≈ 0.13 %, up to ~1 % on ordinary days,
   gross errors on 3 of 41 sample days (2.2). Measured on the full archive in P1 and reported.
-- D6 programmed vs D7 actual exports, as a share of supply (2018 → 2026-09): median 0, p90 ≤ 0.62 %,
-  max 12.2 % (2021). This is the error of provisional actuals on export days.
+- D6 programmed vs D7 actual exports, as a share of the target (2018-01-01 → 2025-09-30, 2,811
+  days): median 0, p90 0.26 %, p99 1.83 %, max 13.8 % (2021-11-10). This is the error of
+  provisional actuals on export days.
+- D8 schema change in 2025-11 (Res. 400/25: new tables and columns; GRUPO, HORA, ENERGIA not
+  listed as changed). Candidate break: D8 vs D7 supply is checked across 2025-11 before use.
 - D2/D3 live demand is ≈ 7 % above local demand and its ratio varies by weekday; it is not used.
 - D1 quality issues (invalid temperatures, ambiguous peak times) are irrelevant once D1 is a
   cross-check only.
@@ -129,15 +137,26 @@ Fixed so far:
 | Test | 2025-10-01 → 2026-09-30 | evaluated once, after all choices are frozen |
 | Forward test | first live forecast → | production scoring |
 
-- Training window: sliding window of fixed length L, L ∈ {≤ 3 candidates} chosen on validation;
-  within backtests the model is refit monthly on the most recent L years ending ≤ D-2.
+- Training window: sliding window of fixed length L, L ∈ {≤ 3 candidates} chosen on validation.
+  Within backtests the model is refit monthly; a refit on date r uses only labels published by r:
+  definitive values up to targets.definitive_available_until(r) (the Síntesis of month M is
+  taken as published on day 20 of M+1), never later days. Production refits follow the same rule.
 - M-fc training inputs: GFS previous_day2, 2021-03-25 → 2024-09-30 (2023-12-29 → 2024-01-20 excluded).
 - EDA: unrestricted on data ≤ 2025-09-30. On the test period only data-quality checks (gaps, units,
-  duplicates). Disclosure: 2026-01 mean daily energy (D1) was seen during inspection (descriptive only).
+  duplicates). Disclosures: 2026-01 mean daily energy (D1) was seen during inspection
+  (descriptive only); a programmed-vs-actual export error statistic was first computed on
+  2018 → 2026-09 (DECISIONS 2026-10-27) and later recomputed on ≤ 2025-09-30 (2.3); live-source
+  definition checks used October 2026, after the test period. None is a model result.
 
 ### 4.2 Baselines
 
-- B0: seasonal naive (same weekday, reference rule as the model target; T1 in method_notes).
+- B0: reference level of D = median of the available values among lag_7, lag_14, lag_21 and
+  lag_28 (same weekday over the previous four weeks, versions known at the issue time, at least
+  two values). The median is robust to one wrong daily report; a single reference day carries
+  report errors straight into the forecast (audit 2026-10-29). The model's relative target uses
+  the same reference, with the mean weather of the same reference days.
+- Version mix (stated, not a defect): labels are definitive (D7); reference and lags are the
+  provisional versions known at the issue time, in training, backtests and production alike.
 - B1: CAMMESA day-ahead programme (D6, version rule 2.2) on the target definition, built by
   addition of its own components: DEMANDA NETA + PERDIDAS + DEMANDA BOMBEO (DEMANDA in the
   balance; exports are not part of it). Daily energy and max of the hourly values. Only the sum is
@@ -159,7 +178,8 @@ Extremes rule (fixed 2026-10-24): "out of range" = above the seasonal 99th perce
 previous years, for daily temperature and for ΔCDD vs the reference day, computed year by year.
 F-hyb is kept if it is not worse than F-tree on the whole validation period (one-sided
 Diebold-Mariano, 5 %) and has lower error on out-of-range days of a rolling-origin backtest
-2016 → 2025-09-30 (yearly refits). The test is not used for this choice.
+2021-01-01 → 2025-09-30 (yearly refits; targets exist from 2018-01-01, so 2021 is the first year
+with three years of history). The test is not used for this choice.
 
 ### 4.4 Leakage rules
 
@@ -175,6 +195,9 @@ Diebold-Mariano, 5 %) and has lower error on out-of-range days of a rolling-orig
   standard deviation of the percentage error. Comparisons with B1 are reported on both MAPE and
   spread, because a deliberate overestimate by the operator appears as bias, not as spread.
 - Provisional and definitive scores are both kept (2.2); headline results use definitive scores.
+  Provisional scores are biased in favour of B1: the validity check uses B1, so the days where
+  the programme failed badly are dropped from provisional scoring. Provisional comparisons with
+  B1 are reported with and without the days the check rejected.
 - 95 % CI: paired moving-block bootstrap (block 7 days, B = 2000).
 - Diebold-Mariano with HAC variance and Harvey-Leybourne-Newbold correction.
 - Errors reported separately on out-of-range days and on load-shedding days.
@@ -187,7 +210,8 @@ and fixed, with their derivation, before the test is evaluated. Structure:
 - S1: skill vs B0 on test above a threshold derived from validation, CI lower bound > 0.
 - S2: MAPE on test vs B1's test MAPE within a margin derived from validation.
 - S3: forward test: same comparison after ≥ 90 live days.
-- S4: collector archives ≥ 95 % of scheduled snapshots over 60 days on AWS.
+- S4: over 60 days on AWS, ≥ 95 % of the D6 programmes and D8 daily reports published by
+  CAMMESA are archived within 24 h of publication (verify mode).
 - S5: forecast produced and scored automatically for ≥ 95 % of days over 60 days.
 - S6: monthly AWS cost, gross, credits excluded ≤ USD 1.00.
 - S7: a fresh clone redeploys the service from documented commands (requires remote Terraform state).
@@ -210,7 +234,8 @@ and fixed, with their derivation, before the test is evaluated. Structure:
   actuals). Forecasts and scores in DynamoDB. Raw data in private S3. Static dashboard on
   S3 + CloudFront. No EC2, always-on servers, API Gateway, NAT gateway, SageMaker or GPUs.
 - Training on GitHub Actions through OIDC (no stored keys); logs print metrics only.
-- Promotion (shadow mode): a monthly challenger runs in shadow for 56 days, producing genuine
+- Promotion (shadow mode): one challenger at a time runs in shadow for 56 days (a new one is
+  trained only after the previous decision), producing genuine
   out-of-sample forecasts next to the champion without being published. It replaces the champion
   only if its MAE over the shadow period is lower and a one-sided Diebold-Mariano test rejects
   equal accuracy at 5 %. Low power is accepted as a conservative design.
@@ -236,12 +261,12 @@ extra weather variables, public API, conversational interface, redistribution of
 
 ## 10. Open items
 
-- O3: city set and weights (A′ weights from D7 province demand shares on training data, 2019 →).
-- O14: validity-check thresholds k1, k2 (2.2), set on training data.
 - O15: D8 vs D7 on the full archive (daily totals and hourly values, all years incl. 2024-11 →
   2026-10); D8 daily vs complement distribution; days with several complements.
 - O16: hourly target for T2: D8 hourly supply − D7 hourly exports; check D8 hourly vs D7 hourly.
 - O10: FALLAS meaning (load shedding / unserved energy).
 - O11: remote Terraform state before CD.
 - Resolved: O1 (2026-10-24), O2 (2026-10-23), O4 → method_notes, O5 (2026-10-24), O6, O7 (GFS),
-  O8, O9 and O12 (obsolete: D3 and D5 are not targets), O13 (2026-10-26: supplied energy from D8 + D7).
+  O8, O9 and O12 (obsolete: D3 and D5 are not targets), O13 (2026-10-26: supplied energy from
+  D7, live values from D8), O3 (2026-10-28: point weights, src/sadi_forecast/weights.py),
+  O14 (2026-10-28: validity check, 2.2).

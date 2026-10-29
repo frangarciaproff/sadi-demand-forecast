@@ -29,8 +29,10 @@ def first_and_last(nat: pd.DataFrame) -> pd.DataFrame:
     """Per date: energy in the first and in the last complete published version."""
     ok = nat.dropna(subset=["energy_mwh"])
     ok = ok.sort_values(["date", "pub_date", "pub_time", "doc_id"])
-    first = ok.groupby("date").first()[["energy_mwh", "pub_date"]]
-    last = ok.groupby("date").last()[["energy_mwh", "pub_date"]]
+    # head/tail keep whole rows; groupby().first()/last() would mix columns of
+    # different versions when some values are null.
+    first = ok.groupby("date").head(1).set_index("date")[["energy_mwh", "pub_date"]]
+    last = ok.groupby("date").tail(1).set_index("date")[["energy_mwh", "pub_date"]]
     return first.add_suffix("_first").join(last.add_suffix("_last")).reset_index()
 
 
@@ -60,7 +62,7 @@ def b1_daily(programme: pd.DataFrame) -> pd.DataFrame:
     preferred = p["target_date"].map(lambda d: "csv" if d >= B1_CSV_FROM else "txt")
     p["rank_source"] = (p["source"] == preferred).astype(int)
     p = p.sort_values(["target_date", "rank_source", "pub_date", "pub_time", "doc_id"])
-    out = p.groupby("target_date").last().reset_index()
+    out = p.groupby("target_date").tail(1).reset_index(drop=True)
     cols = ["target_date", "energy_mwh", "source", "doc_id"]
     extra = [c for c in ("b1_total_mwh", "exports_mwh") if c in out.columns]
     return out[cols + extra]

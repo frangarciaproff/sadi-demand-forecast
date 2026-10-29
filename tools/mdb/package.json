@@ -1,0 +1,9 @@
+{
+  "name": "sadi-mdb-reader",
+  "private": true,
+  "type": "module",
+  "description": "Reads Parte Post Operativo Access databases for scripts in this repository",
+  "dependencies": {
+    "mdb-reader": "3.1.0"
+  }
+}

@@ -1,11 +1,13 @@
-"""O14: thresholds of the validity check of daily reports (SPEC 2.2), training days.
+"""O14: validity check of daily reports (SPEC 2.2), measured on training days.
 
-Ratios, computed with definitive values (complements) on every training day:
-    r1 = target / B1 total                      (operator programme, same definition)
-    r2 = target / median of the same weekday in the previous 4 weeks
-k1, k2 = quantiles of |r - 1| (99, 99.5, 99.9 %). Then the check is applied to every
-archived daily report (provisional = daily supply - programmed exports) to measure
-how many are flagged and whether the known gross errors are caught.
+Ratios computed with definitive values on every training day:
+    r1 = target / B1 total   (operator programme, same definition)
+    r2 = target / median of the same weekday in the previous 4 weeks (diagnostic only:
+         it moves +-40 % in heat waves, DECISIONS 2026-10-28)
+Quantiles of |r1 - 1| (99, 99.5, 99.9 %) are candidate thresholds. The rules
+(structural: 24 hours and positive supply; r1) are applied to every archived daily
+report (provisional = daily supply - programmed exports) and scored against the
+report's own error (daily supply vs complement).
 
 Uses only training days (2018-01-01 → 2024-09-30). Daily detail goes to
 data/interim/eda/ (not committed); the summary to results/eda/validity_check.json.
@@ -31,7 +33,6 @@ INTERIM = ROOT / "data" / "interim"
 TRAIN_START = dt.date(2018, 1, 1)
 TRAIN_END = dt.date(2024, 9, 30)
 QUANTILES = (0.99, 0.995, 0.999)
-KNOWN_ERRORS = ["2022-05-15", "2022-08-15", "2023-11-14"]
 
 
 def same_weekday_median(series: pd.Series, weeks: int = 4) -> pd.Series:
@@ -74,27 +75,39 @@ def main() -> int:
 
     prov = provisional_daily(postop, b1)
     prov = prov[[TRAIN_START <= d <= TRAIN_END for d in prov["date"]]].copy()
+    comp = target["supply_mwh"]
     prov["r1"] = prov["provisional_mwh"] / prov["b1_total_mwh"]
     prov["r2"] = prov["provisional_mwh"] / prov["date"].map(med)
     prov["dev_vs_definitive"] = prov["provisional_mwh"] / prov["date"].map(t) - 1
-    checks = {}
-    for q in QUANTILES:
-        k1, k2 = k["r1"][f"q{q * 100:g}"], k["r2"][f"q{q * 100:g}"]
-        bad = ((prov["r1"] - 1).abs() > k1) | ((prov["r2"] - 1).abs() > k2)
-        gross = prov["dev_vs_definitive"].abs() > 0.02
-        checks[f"q{q * 100:g}"] = {
-            "k1": k1,
-            "k2": k2,
-            "reports": len(prov),
+    # Measurement error of the report itself, and error of programmed exports.
+    prov["supply_dev"] = prov["supply_mwh"] / prov["date"].map(comp) - 1
+    prov["export_err"] = (
+        prov["exports_mwh"].fillna(0.0) - prov["date"].map(target["exports7_mwh"])
+    ) / prov["date"].map(t)
+    structural = (prov["hours_present"] < 24) | (prov["supply_mwh"] <= 0)
+    gross = prov["supply_dev"].abs() > 0.02
+    clean = prov["supply_dev"].abs() <= 0.005
+
+    def evaluate(bad: pd.Series) -> dict[str, int]:
+        return {
             "flagged": int(bad.sum()),
-            "reports_off_by_more_than_2pct": int(gross.sum()),
-            "of_those_flagged": int((bad & gross).sum()),
-            "known_errors_flagged": {
-                d: bool(bad[prov["date"] == dt.date.fromisoformat(d)].any())
-                for d in KNOWN_ERRORS
-            },
+            "caught_gross_report_errors": int((bad & gross).sum()),
+            "false_alarms_on_clean_reports": int((bad & clean).sum()),
         }
+
+    checks: dict[str, object] = {
+        "reports": len(prov),
+        "gross_report_errors_supply_dev_over_2pct": int(gross.sum()),
+        "structural_only": evaluate(structural),
+    }
+    for q in QUANTILES:
+        k1 = k["r1"][f"q{q * 100:g}"]
+        r1_bad = (prov["r1"] - 1).abs() > k1
+        checks[f"r1_q{q * 100:g}"] = {"k1": k1, **evaluate(r1_bad)}
+        checks[f"structural_or_r1_q{q * 100:g}"] = evaluate(structural | r1_bad)
     dev = prov["dev_vs_definitive"].abs().dropna()
+    sdev = prov["supply_dev"].abs().dropna()
+    eerr = prov["export_err"].abs().dropna()
     summary = {
         "period": [TRAIN_START.isoformat(), TRAIN_END.isoformat()],
         "flags": target["flag"].value_counts().to_dict(),
@@ -113,6 +126,16 @@ def main() -> int:
                 4,
             ),
         },
+        "daily_supply_vs_complement_abs_pct": {
+            "median": round(100 * float(sdev.median()), 3),
+            "p90": round(100 * float(sdev.quantile(0.9)), 3),
+            "p99": round(100 * float(sdev.quantile(0.99)), 3),
+        },
+        "programmed_vs_actual_exports_abs_pct_of_target": {
+            "p90": round(100 * float(eerr.quantile(0.9)), 3),
+            "p99": round(100 * float(eerr.quantile(0.99)), 3),
+            "max": round(100 * float(eerr.max()), 3),
+        },
         "daily_vs_definitive_abs_pct": {
             "median": round(100 * float(dev.median()), 3),
             "p90": round(100 * float(dev.quantile(0.9)), 3),
@@ -129,9 +152,10 @@ def main() -> int:
                 "date": str(row["date"]),
                 "published": row["published"],
                 "dev_vs_definitive_pct": round(100 * row["dev_vs_definitive"], 2),
+                "supply_dev_pct": round(100 * row["supply_dev"], 2),
                 "r1": round(row["r1"], 3),
             }
-            for row in prov.assign(a=prov["dev_vs_definitive"].abs())
+            for row in prov.assign(a=prov["supply_dev"].abs())
             .sort_values("a", ascending=False)
             .head(15)
             .to_dict(orient="records")
@@ -153,7 +177,7 @@ def main() -> int:
     out = ROOT / "results" / "eda"
     out.mkdir(parents=True, exist_ok=True)
     (out / "validity_check.json").write_text(
-        json.dumps(summary, indent=2, default=str) + "\n", encoding="utf-8"
+        json.dumps(summary, indent=2, default=str), encoding="utf-8"
     )
     print(json.dumps(summary, indent=2, default=str))
     return 0

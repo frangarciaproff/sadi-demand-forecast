@@ -199,7 +199,12 @@ def daily_by_base(hourly: pd.DataFrame) -> pd.DataFrame:
 def latest_daily(hourly: pd.DataFrame) -> pd.DataFrame:
     """Per date, the complete day from the latest base that contains it."""
     days = daily_by_base(hourly).dropna(subset=["local_mwh"])
-    return days.sort_values(["date", "base"]).groupby("date").last().reset_index()
+    return (
+        days.sort_values(["date", "base"])
+        .groupby("date")
+        .tail(1)
+        .reset_index(drop=True)
+    )
 
 
 SUPPLY_MEMBER_RE = re.compile(r"^oferta total horaria\.xlsx$", re.I)
@@ -259,7 +264,10 @@ def _sheet_values(
             raise ValueError(f"export column not found in header {header}")
     out: dict[tuple[dt.date, int], float] = {}
     for d, hr, row in it:
-        out[(d, hr)] = sum(_num(row[i]) or 0.0 for i in cols if i < len(row))
+        values = [_num(row[i]) for i in cols if i < len(row)]
+        # An hour with no value in any column is missing (NaN), not zero.
+        present = [v for v in values if v is not None]
+        out[(d, hr)] = sum(present) if present else float("nan")
     return out
 
 
