@@ -4,29 +4,35 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 ART_OFFSET = pd.Timedelta(hours=-3)  # Argentina, no DST
 
 
-def load_response(path: Path) -> pd.DataFrame:
-    """One response file: time_utc, time_art, point, grid info, one column per variable.
+def response_frame(data: dict[str, Any], default_point: str = "") -> pd.DataFrame:
+    """A parsed response: time_utc, time_art, point, grid info, one column per variable.
 
     Variable suffixes _previous_day1/_previous_day2 are kept as they are.
     """
-    data = json.loads(path.read_text(encoding="utf-8"))
     hourly = dict(data["hourly"])
     times = pd.to_datetime(hourly.pop("time"), utc=True)
     df = pd.DataFrame(hourly)
     df.insert(0, "time_utc", times)
     df.insert(1, "time_art", (times + ART_OFFSET).tz_localize(None))
     req = data.get("_request", {})
-    df["point"] = req.get("point", {}).get("key", path.parent.name)
+    df["point"] = req.get("point", {}).get("key", default_point)
     df["grid_lat"] = data.get("latitude")
     df["grid_lon"] = data.get("longitude")
     df["grid_elevation_m"] = data.get("elevation")
     return df
+
+
+def load_response(path: Path) -> pd.DataFrame:
+    """One response file (see response_frame)."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return response_frame(data, path.parent.name)
 
 
 def build_weather(raw_dir: Path, source: str) -> pd.DataFrame:

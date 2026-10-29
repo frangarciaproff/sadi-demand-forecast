@@ -1,0 +1,8 @@
+*
+!tools/mdb/package.json
+!tools/mdb/package-lock.json
+!tools/mdb/supply.mjs
+!infra/forecaster/requirements.txt
+!infra/forecaster/forecaster_handler.py
+!src/sadi_forecast/**
+**/__pycache__

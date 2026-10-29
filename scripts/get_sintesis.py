@@ -1,4 +1,4 @@
-"""Download CAMMESA Informe Síntesis Mensual base packages (D7). Standard library only.
+"""Download CAMMESA Informe Síntesis Mensual base packages (D7).
 
 Each December base holds the four calendar years ending in that December:
 hourly national demand by type (2021-12 base: 2018-2021) and, from the 2022-12 base,
@@ -15,9 +15,9 @@ registry.json, which extends BASES. A month's base is published about the 20th o
 next month (SPEC 4.1).
 
 Usage (from the repository root):
-    py -3 scripts/get_sintesis.py            # all bases in BASES and the registry
-    py -3 scripts/get_sintesis.py --discover # find new bases, then download them
-    py -3 scripts/get_sintesis.py --list     # show the registry and what is on disk
+    uv run python scripts/get_sintesis.py             # bases in BASES and the registry
+    uv run python scripts/get_sintesis.py --discover  # find new bases, then download
+    uv run python scripts/get_sintesis.py --list      # registry and what is on disk
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ import argparse
 import datetime as dt
 import hashlib
 import json
-import re
 import sys
 import time
 import urllib.error
@@ -34,39 +33,16 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from sadi_forecast.sintesis_web import BASES, SITE, YEAR_PAGE, find_bases
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "data" / "raw" / "cammesa" / "sintesis"
-SITE = "https://cammesaweb.cammesa.com/"
 USER_AGENT = "sadi-demand-forecast/0.1 (research archive; low-rate)"
 TIMEOUT_S = 300
 RETRIES = 3
 PAUSE_S = 2.0
 
-# base label -> download path (from the /historico-sintesis-mensual-YYYY/ pages,
-# 2026-10-26). The "refresh" query parameter is not needed.
-BASES: dict[str, str] = {
-    "2021-12": "download/base_informe_mensual_2021-12/?wpdmdl=41598",
-    "2022-12": "download/base-informe-mensual-2022-12/?wpdmdl=44146",
-    "2023-12": "download/base_informe_mensual_2023-12/?wpdmdl=47482",
-    "2024-12": "download/base_informe_mensual_2024-12/?wpdmdl=49554",
-    "2025-12": "download/base_informe_mensual_2025-12/?wpdmdl=51545",
-    "2026-09": "download/base_informe_mensual_2026-09/?wpdmdl=53541",
-}
-
-
 REGISTRY = OUT_DIR / "registry.json"
-YEAR_PAGE = SITE + "historico-sintesis-mensual-{year}/"
-LINK_RE = re.compile(
-    r"(download/base[-_]informe[-_]mensual[-_](\d{4})-(\d{2})/?\?wpdmdl=\d+)", re.I
-)
-
-
-def find_bases(html: str) -> dict[str, str]:
-    """base label (YYYY-MM) -> download path, from a yearly Síntesis page."""
-    out: dict[str, str] = {}
-    for path, year, month in LINK_RE.findall(html):
-        out.setdefault(f"{year}-{month}", path)
-    return out
 
 
 def registry() -> dict[str, str]:

@@ -5,10 +5,12 @@ locals {
   bucket_name = "sadi-demand-raw-${data.aws_caller_identity.current.account_id}"
   timezone    = "America/Argentina/Buenos_Aires"
 
+  # docs_morning runs before the forecaster (09:30): reports published overnight, before the 10:00 issue.
   schedules = {
-    snapshot = { cron = "cron(30 0,6,12,18 * * ? *)", input = jsonencode({ mode = "snapshot", regions = var.regions }) }
-    day      = { cron = "cron(15 1 * * ? *)", input = jsonencode({ mode = "day", regions = var.regions }) }
-    docs     = { cron = "cron(30 23 * * ? *)", input = jsonencode({ mode = "docs", days = 8 }) }
+    snapshot     = { cron = "cron(30 0,6,12,18 * * ? *)", input = jsonencode({ mode = "snapshot", regions = var.regions }) }
+    day          = { cron = "cron(15 1 * * ? *)", input = jsonencode({ mode = "day", regions = var.regions }) }
+    docs         = { cron = "cron(30 23 * * ? *)", input = jsonencode({ mode = "docs", days = 8 }) }
+    docs_morning = { cron = "cron(0 9 * * ? *)", input = jsonencode({ mode = "docs", days = 8 }) }
   }
 }
 

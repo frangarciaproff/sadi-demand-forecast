@@ -1,4 +1,4 @@
-.PHONY: install lint format types test check
+.PHONY: install lint format types test check requirements image
 
 install:
 	uv sync
@@ -17,3 +17,9 @@ test:
 
 check: lint types test
 	uv run ruff format --check .
+
+requirements:
+	uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o infra/forecaster/requirements.txt
+
+image: requirements
+	docker build --platform linux/amd64 --provenance=false -t sadi-forecaster .

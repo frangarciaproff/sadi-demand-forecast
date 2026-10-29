@@ -26,3 +26,8 @@ variable "budget_usd" {
   type        = number
   default     = 1
 }
+
+variable "forecaster_image_tag" {
+  description = "Tag of the forecaster image in ECR (immutable tags; one per build)."
+  type        = string
+}

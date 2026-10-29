@@ -23,6 +23,19 @@ jobs:
         run: uv run mypy
       - name: Tests
         run: uv run pytest -q
+      - name: Image requirements match uv.lock
+        run: |
+          uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o infra/forecaster/requirements.txt
+          git diff --exit-code infra/forecaster/requirements.txt
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the forecaster image (no push)
+        run: docker build --platform linux/amd64 --provenance=false -t sadi-forecaster .
+      - name: Import check inside the image
+        run: docker run --rm --entrypoint python3 sadi-forecaster -c "import forecaster_handler, sadi_forecast.service; print('ok')"
 
   terraform:
     runs-on: ubuntu-latest

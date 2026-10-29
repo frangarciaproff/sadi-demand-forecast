@@ -37,6 +37,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from sadi_forecast.openmeteo import LIVE_VARS, live_url
 from sadi_forecast.points import POINTS, Point
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,12 +78,6 @@ SOURCES: dict[str, dict[str, object]] = {
 }
 
 
-LIVE_URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
-LIVE_VARS = ("temperature_2m_previous_day2",)
-LIVE_PAST_DAYS = 32
-LIVE_FORECAST_DAYS = 3  # today (UTC), the target day and the next (ART is UTC-3)
-
-
 class DailyLimitError(RuntimeError):
     pass
 
@@ -101,19 +96,6 @@ def build_url(source: str, point: Point, start: dt.date, end: dt.date) -> str:
         "timezone": "GMT",
     }
     return f"{cfg['url']}?{urllib.parse.urlencode(params)}"
-
-
-def live_url(point: Point) -> str:
-    params = {
-        "latitude": f"{point.lat:.4f}",
-        "longitude": f"{point.lon:.4f}",
-        "hourly": ",".join(LIVE_VARS),
-        "models": "gfs_global",
-        "past_days": str(LIVE_PAST_DAYS),
-        "forecast_days": str(LIVE_FORECAST_DAYS),
-        "timezone": "GMT",
-    }
-    return f"{LIVE_URL}?{urllib.parse.urlencode(params)}"
 
 
 def fetch_live(points: list[Point], pause: float) -> int:

@@ -1,6 +1,7 @@
 # SPEC — sadi-demand-forecast
 
-Status: v0.8 (2026-10-29). v0.8: D8 summation excludes YACYHIPY; validation decision sequence
+Status: v0.9 (2026-10-29). v0.9: production design (section 7).
+v0.8 (2026-10-29). v0.8: D8 summation excludes YACYHIPY; validation decision sequence
 run (family F-tree, window 5 years, weather M-fc; DECISIONS 2026-10-29); O15 narrowed; S1/S2
 thresholds fixed; test evaluated once (S1 passed, S2 failed; DECISIONS 2026-10-29). Re-audit:
 post-hoc checks replaced F-tree by F-hyb (v1 = F-hyb, 5 years, M-fc; its test score is on a test
@@ -246,21 +247,43 @@ and fixed, with their derivation, before the test is evaluated. Structure:
 
 ## 7. Production design (P2)
 
-- EventBridge Scheduler → Lambda (collector, forecaster after issue-time data, scorer after
-  actuals). Forecasts and scores in DynamoDB. Raw data in private S3. Static dashboard on
-  S3 + CloudFront. No EC2, always-on servers, API Gateway, NAT gateway, SageMaker or GPUs.
-- Training on GitHub Actions through OIDC (no stored keys); logs print metrics only.
-- Promotion (shadow mode): one challenger at a time runs in shadow for 56 days (a new one is
-  trained only after the previous decision), producing genuine
-  out-of-sample forecasts next to the champion without being published. It replaces the champion
-  only if its MAE over the shadow period is lower and a one-sided Diebold-Mariano test rejects
-  equal accuracy at 5 %. Low power is accepted as a conservative design.
-- Registry: S3 prefix models/ (immutable artifacts) + models/champion.json.
-- Monitoring: 28-day rolling MAE ratio model/B0; alert when it exceeds the test-period ratio by
-  50 % (relative to B0, so seasonal level changes do not trigger it). Out-of-range flag on forecasts.
-- Delivery: CI on every push. CD of infrastructure only after Terraform state moves to a remote
-  S3 backend with locking; plan on merge to main, apply through a protected environment with
-  manual approval; OIDC role scoped to project resources.
+Fixed 2026-10-29 (Fran: JSON in S3, training in Lambda; DECISIONS 2026-10-29). No EC2,
+always-on servers, API Gateway, NAT gateway, SageMaker or GPUs.
+
+- Collector (P0 Lambda, unchanged) archives raw documents to s3://<raw bucket>/raw/cammesa/.
+  An extra documents run at 09:00 ART catches reports published overnight before the issue.
+- Forecaster: one Lambda from a container image (ECR; Python, the package, Node + mdb-reader for
+  the Access databases), two events:
+  - daily, 09:30 ART: (1) update the state tables with documents not yet in them (D6 and D8 listed
+    in the last 45 days); (2) fetch the live GFS inputs (previous_day2, 48 h lead) and merge them
+    into the weather table; (3) forecast D + 1 with the champion model (same code as
+    scripts/forecast.py) and write forecasts/<day>.json once (never overwritten); (4) score every
+    forecast day whose actuals exist: provisional from the first valid daily report, definitive
+    from the Síntesis, with B0 and B1 next to the model (scores/<day>.json, updated when the
+    definitive value arrives).
+  - monthly, day 21, 03:00 ART: discover and download new Síntesis bases, rebuild the supply table
+    and the feature table, retrain the champion configuration on the labels published by that date
+    (label embargo, as in the backtest), write models/<date>/ and point models/champion.json to it.
+    A monthly refit of the champion configuration is routine (it is what the backtest and the test
+    measured) and does not go through the promotion gate.
+- State: s3://<raw bucket>/state/: d6_programme_hourly, d8_postop_versions, d7_supply_hourly,
+  gfs_daily (daily mean previous_day2 temperature per point) and features_daily, all parquet.
+  Seeded once from the PC tables (scripts/seed_state.py); afterwards only the Lambda writes them.
+  Point weights are frozen (results/point_weights.csv, inside the image).
+- Outputs: forecasts/, scores/, models/ in the same bucket, private. Static dashboard on S3 +
+  CloudFront reading forecasts/ and scores/ (after the service runs).
+- Training runs inside the Lambda: a fit takes seconds and the data never leave AWS (no egress
+  cost, no external credentials). GitHub Actions: tests on every push; image build and Terraform
+  only after the Terraform state moves to a remote S3 backend with locking (O11).
+- Promotion (shadow mode), for a challenger configuration only: one challenger at a time runs
+  in shadow for 56 days, producing genuine out-of-sample forecasts next to the champion without
+  being published. It replaces the champion only if its MAE over the shadow period is lower and a
+  one-sided Diebold-Mariano test rejects equal accuracy at 5 %. Low power is accepted.
+- Monitoring: Lambda error and missing-run alarms (email, as the collector); a run that cannot
+  forecast raises. 28-day rolling MAE ratio model/B0; alert when it exceeds the test-period ratio
+  by 50 %. Out-of-range flag on forecasts.
+- Cost (S6): Lambda (about 3 GB × a few minutes a day) and CloudFront within the free tier; ECR
+  image storage about USD 0.10 per month; S3 a few cents.
 
 ## 8. Non-goals (v1)
 

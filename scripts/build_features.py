@@ -27,6 +27,8 @@ from sadi_forecast.weights import point_weights
 ROOT = Path(__file__).resolve().parents[1]
 INTERIM = ROOT / "data" / "interim"
 RAW_WEATHER = ROOT / "data" / "raw" / "open_meteo"
+# Copy inside the package: the service (Lambda image) reads the frozen weights there.
+PACKAGE_WEIGHTS = ROOT / "src" / "sadi_forecast" / "data" / "point_weights.csv"
 TRAIN_WEIGHTS = (dt.date(2019, 1, 1), dt.date(2024, 9, 30))  # province sheet from 2019
 FIRST_DAY = dt.date(2018, 1, 1)
 LAST_DAY = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=3)).date()  # today, ART
@@ -53,7 +55,8 @@ def main() -> int:
     weights = point_weights(provinces, d5, *TRAIN_WEIGHTS)
     out = ROOT / "results"
     out.mkdir(parents=True, exist_ok=True)
-    weights.to_csv(out / "point_weights.csv", index_label="point", float_format="%.17g")
+    for path in (out / "point_weights.csv", PACKAGE_WEIGHTS):
+        weights.to_csv(path, index_label="point", float_format="%.17g")
     logging.info("weights:\n%s", weights.round(4).to_string())
 
     weather = {}

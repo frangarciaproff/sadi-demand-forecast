@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -39,7 +40,10 @@ CACHE_VERSION = 4  # 4: YACYHIPY excluded (tools/mdb/supply.mjs)
 # Access databases are read with the Node package mdb-reader (tools/mdb): the Python
 # readers tried (access-parser 0.0.6 and its 2025 master) fail on every row of the
 # 2024 files.
-TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools" / "mdb"
+TOOLS_DIR = Path(
+    os.environ.get("SADI_MDB_TOOLS")
+    or Path(__file__).resolve().parents[2] / "tools" / "mdb"
+)
 CHUNK = 25
 
 

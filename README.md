@@ -22,7 +22,7 @@ As of 2026-10-29.
 | Weather inputs | Reanalysis (ERA5) and 48-hour-lead forecasts (GFS) for 15 points, downloaded |
 | Feature table and baselines | Built: lags as known at the issue time, calendar, demand-weighted temperature; baseline errors in [`results/baselines.json`](results/baselines.json) |
 | Models, backtests | Daily energy: decision sequence on the validation year, test year evaluated once, re-audit checks (below); daily peak deferred to v2 |
-| Forecasts | Local pipeline: training, live inputs, one-day forecast (checked against the training table); AWS not started |
+| Forecasts | Running on AWS Lambda since 2026-10-29: daily forecast at 09:30 ART, scores against actuals and the operator's programme, monthly retraining |
 | Scoring, dashboard, continuous deployment | Not started |
 
 ## What is built
@@ -194,7 +194,8 @@ The model forecasts daily energy only; the daily peak is deferred to v2.
     SPEC.md                    design
     docs/DECISIONS.md          append-only log of decisions and findings
     docs/data_inventory.md     source formats and parsing rules
-    infra/                     Terraform for the AWS collector
+    infra/                     Terraform for the AWS collector and forecaster
+    Dockerfile                 forecaster Lambda image
     scripts/                   collector, downloads, table builders, data checks
     src/sadi_forecast/         parsers, tables, features, models, evaluation
     tests/                     pytest suite (fake CAMMESA server for the collector)
@@ -216,7 +217,13 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/).
     uv run python scripts/evaluate_test.py             # once; refuses if its output exists
     uv run python scripts/sensitivity.py               # re-audit checks (validation)
 
-Daily forecast, locally (after the collector's documents run):
+The service (SPEC 7), on the PC archive or on the S3 bucket:
+
+    uv run python scripts/seed_state.py                # once: data/state/ and data/models/
+    uv run python scripts/run_service.py daily         # tables, live weather, forecast, scores
+    uv run python scripts/run_service.py monthly       # Síntesis, tables, retrain, champion
+
+Daily forecast with the step-by-step scripts (after the collector's documents run):
 
     uv run python scripts/build_tables.py --only d6 d8
     uv run python scripts/get_weather.py --live
