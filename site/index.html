@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SADI demand forecast</title>
+  <meta name="description" content="Day-ahead forecast of the energy supplied by Argentina's interconnected grid, scored daily against actuals and the operator's programme.">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="viz-root">
+    <header>
+      <p class="eyebrow">Argentina · interconnected grid (SADI)</p>
+      <h1>Day-ahead electricity demand forecast</h1>
+      <p class="lede">Energy the grid will supply tomorrow (generation + imports − exports), issued every day at 10:00 Argentina time, before the operator publishes its own programme, and scored against what actually happened.</p>
+    </header>
+
+    <section class="hero" aria-live="polite">
+      <div>
+        <p class="label">Forecast for <span id="next-date">…</span></p>
+        <p class="big"><span id="next-gwh">…</span> <span class="unit">GWh</span></p>
+        <p class="note" id="next-note"></p>
+      </div>
+      <div class="tiles" id="tiles"></div>
+    </section>
+
+    <section>
+      <h2>Last 90 days</h2>
+      <div class="legend" id="legend"></div>
+      <div class="chart-wrap">
+        <svg id="chart" role="img" aria-labelledby="chart-title">
+          <title id="chart-title">Daily supplied energy: model forecast, operator programme and actual value, last 90 days</title>
+        </svg>
+        <div class="tooltip" id="tooltip" hidden></div>
+      </div>
+      <p class="note">Actual = definitive value from the operator's monthly balance when published (about the 20th of the next month); before that, the provisional value from its daily post-operation report (hollow markers).</p>
+      <details>
+        <summary>Table</summary>
+        <div class="table-wrap">
+          <table id="table">
+            <thead><tr><th>Date</th><th>Model (GWh)</th><th>Operator (GWh)</th><th>Actual (GWh)</th><th>Model error</th><th>Operator error</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <section>
+      <h2>How it works</h2>
+      <ul class="plain">
+        <li>Model: a linear response to heating and cooling degree days plus gradient-boosted trees on the rest (calendar, recent days), on the change against the median of the same weekday in the previous four weeks.</li>
+        <li>Inputs as known at the issue time: the operator's daily reports already published (three or more days old), the 48-hour-lead GFS temperature forecast at 15 demand centres, and the holiday calendar.</li>
+        <li>Retrained every month on the values the operator has published by then.</li>
+        <li>The operator's programme is published about 11 hours later and uses real-time operating data, so the comparison favours it.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Offline evaluation</h2>
+      <p>Mean absolute percentage error over a full year, against the same-weekday baseline and the operator's programme.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Period</th><th>Model</th><th>Operator programme</th><th>Same weekday, 4-week median</th></tr></thead>
+          <tbody>
+            <tr><td>Validation, Oct 2024 – Sep 2025</td><td>3.09 %</td><td>3.39 %</td><td>8.68 %</td></tr>
+            <tr><td>Test, Oct 2025 – Sep 2026<sup>*</sup></td><td>3.26 %</td><td>3.09 %</td><td>8.26 %</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note"><sup>*</sup>The test year was first used, once, for a gradient-boosted-trees model (3.41 %). After an external audit, the hybrid model shown here replaced it under a rule written down before the check; its test-year number is therefore not a clean test. The clean evaluation is the live record on this page. The operator's programme overestimates by about 3 % by design.</p>
+    </section>
+
+    <footer>
+      <p>Code and methods: <a href="https://github.com/frangarciaproff/sadi-demand-forecast" rel="noopener noreferrer">github.com/frangarciaproff/sadi-demand-forecast</a>.</p>
+      <p>Data: CAMMESA published information, used with the operator's permission; weather data by <a href="https://open-meteo.com/" rel="noopener noreferrer">Open-Meteo.com</a> (CC BY 4.0). Not an official forecast.</p>
+      <p class="note">Updated <span id="generated">…</span> · model version <span id="model-version">…</span></p>
+    </footer>
+  </main>
+</body>
+</html>

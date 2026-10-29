@@ -4,6 +4,7 @@ Events:
     {"mode": "daily"}    state update, live weather, forecast of tomorrow, scores
     {"mode": "monthly"}  Síntesis, supply and feature tables, retrain, champion
     {"mode": "score"}    scores only
+    {"mode": "site"}     public page data only (site bucket)
 """
 
 from __future__ import annotations
@@ -21,10 +22,14 @@ logging.getLogger().setLevel(logging.INFO)
 
 def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     store = S3Store(os.environ["BUCKET"])
+    site_bucket = os.environ.get("SITE_BUCKET")
+    site = S3Store(site_bucket) if site_bucket else None
     mode = event.get("mode", "daily")
     at = service.now_art()
     if mode == "daily":
-        out = service.daily(store, at)
+        out = service.daily(store, at, site=site)
+    elif mode == "site" and site is not None:
+        out = {"site_days": service.publish_site(store, site, at)}
     elif mode == "monthly":
         out = service.monthly(store, at)
     elif mode == "score":

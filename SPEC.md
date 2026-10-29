@@ -270,8 +270,12 @@ always-on servers, API Gateway, NAT gateway, SageMaker or GPUs.
   gfs_daily (daily mean previous_day2 temperature per point) and features_daily, all parquet.
   Seeded once from the PC tables (scripts/seed_state.py); afterwards only the Lambda writes them.
   Point weights are frozen (results/point_weights.csv, inside the image).
-- Outputs: forecasts/, scores/, models/ in the same bucket, private. Static dashboard on S3 +
-  CloudFront reading forecasts/ and scores/ (after the service runs).
+- Outputs: forecasts/, scores/, models/ in the same bucket, private. Public page: static files
+  (site/) in a separate private bucket served only through CloudFront (origin access control);
+  the daily run writes data.json there (last 90 days of forecasts, actuals, operator programme and
+  errors; daily totals only, no raw documents). Security: no server, API, form or credential;
+  HTTPS only; Content-Security-Policy allowing only the page's own files; no framing; the
+  forecaster may write data.json and nothing else in that bucket.
 - Training runs inside the Lambda: a fit takes seconds and the data never leave AWS (no egress
   cost, no external credentials). GitHub Actions: tests on every push; image build and Terraform
   only after the Terraform state moves to a remote S3 backend with locking (O11).

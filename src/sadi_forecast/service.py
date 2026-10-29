@@ -279,8 +279,104 @@ def score(store: Store) -> int:
     return n
 
 
-def daily(store: Store, run_at: dt.datetime, fetch: Fetch = http_get) -> dict[str, Any]:
-    """Daily event: state, weather, forecast of tomorrow, scores."""
+SITE_DATA = "data.json"
+SITE_DAYS = 90
+
+
+def _mape(errors: list[float | None]) -> float | None:
+    vals = [abs(e) for e in errors if e is not None]
+    return round(sum(vals) / len(vals), 3) if vals else None
+
+
+def site_data(store: Store, now: dt.datetime) -> dict[str, Any]:
+    """The public page's numbers: forecasts and scores of the last SITE_DAYS days.
+
+    Only daily totals and errors (derived results); no raw document is published.
+    """
+    rows: dict[str, dict[str, Any]] = {}
+    for key in store.list("forecasts/"):
+        name = key.rsplit("/", 1)[1]
+        if not name.endswith(".json") or "_rerun_" in name:
+            continue
+        fc = json.loads(store.read(key))
+        rows[fc["target_date"]] = {
+            "date": fc["target_date"],
+            "forecast_mwh": fc["forecast_mwh"],
+            "b0_mwh": fc["reference_mwh"],
+            "issued_at_art": fc.get("run_at_art"),
+            "late": fc.get("late"),
+        }
+    for key in store.list("scores/"):
+        sc = json.loads(store.read(key))
+        if sc["target_date"] in rows:
+            row = rows[sc["target_date"]]
+            for k in (
+                "b1_mwh",
+                "provisional_mwh",
+                "definitive_mwh",
+                "forecast_error_pct_provisional",
+                "forecast_error_pct_definitive",
+                "b1_error_pct_provisional",
+                "b1_error_pct_definitive",
+                "b0_error_pct_provisional",
+                "b0_error_pct_definitive",
+            ):
+                row[k] = sc.get(k)
+    days = sorted(rows)[-SITE_DAYS:]
+    recent = [rows[d] for d in days]
+    summary: dict[str, Any] = {}
+    for kind in ("provisional", "definitive"):
+        scored = [r for r in recent if r.get(f"forecast_error_pct_{kind}") is not None]
+        summary[kind] = {
+            "days": len(scored),
+            "mape_model_pct": _mape([r[f"forecast_error_pct_{kind}"] for r in scored]),
+            "mape_b1_pct": _mape([r.get(f"b1_error_pct_{kind}") for r in scored]),
+            "mape_b0_pct": _mape([r.get(f"b0_error_pct_{kind}") for r in scored]),
+        }
+    best = []
+    for r in recent:
+        kind = (
+            "definitive"
+            if r.get("forecast_error_pct_definitive") is not None
+            else "provisional"
+        )
+        # Model and operator are compared on the same days only.
+        if (
+            r.get(f"forecast_error_pct_{kind}") is not None
+            and r.get(f"b1_error_pct_{kind}") is not None
+        ):
+            best.append((kind, r))
+    summary["best"] = {
+        "days": len(best),
+        "definitive_days": sum(k == "definitive" for k, _ in best),
+        "mape_model_pct": _mape([r[f"forecast_error_pct_{k}"] for k, r in best]),
+        "mape_b1_pct": _mape([r.get(f"b1_error_pct_{k}") for k, r in best]),
+        "mape_b0_pct": _mape([r.get(f"b0_error_pct_{k}") for k, r in best]),
+    }
+    champion = (
+        json.loads(store.read(CHAMPION))["version"] if store.exists(CHAMPION) else None
+    )
+    return {
+        "generated_at_art": now.isoformat(timespec="seconds"),
+        "model_version": champion,
+        "days": recent,
+        "summary": summary,
+    }
+
+
+def publish_site(store: Store, site: Store, now: dt.datetime) -> int:
+    data = site_data(store, now)
+    site.write(SITE_DATA, _json(data))
+    return len(data["days"])
+
+
+def daily(
+    store: Store,
+    run_at: dt.datetime,
+    fetch: Fetch = http_get,
+    site: Store | None = None,
+) -> dict[str, Any]:
+    """Daily event: state, weather, forecast of tomorrow, scores, public page data."""
     today = run_at.date()
     out: dict[str, Any] = {"run_at_art": run_at.isoformat(timespec="seconds")}
     out["state"] = update_state(store, today)
@@ -292,6 +388,8 @@ def daily(store: Store, run_at: dt.datetime, fetch: Fetch = http_get) -> dict[st
         error = exc
         out["forecast_error"] = str(exc)
     out["scores_written"] = score(store)
+    if site is not None:
+        out["site_days"] = publish_site(store, site, run_at)
     if error is not None:
         raise RuntimeError(f"no forecast: {error}") from error
     return out

@@ -23,7 +23,8 @@ As of 2026-10-29.
 | Feature table and baselines | Built: lags as known at the issue time, calendar, demand-weighted temperature; baseline errors in [`results/baselines.json`](results/baselines.json) |
 | Models, backtests | Daily energy: decision sequence on the validation year, test year evaluated once, re-audit checks (below); daily peak deferred to v2 |
 | Forecasts | Running on AWS Lambda since 2026-10-29: daily forecast at 09:30 ART, scores against actuals and the operator's programme, monthly retraining |
-| Scoring, dashboard, continuous deployment | Not started |
+| Public page | [d32m7h2zphotl6.cloudfront.net](https://d32m7h2zphotl6.cloudfront.net), updated daily |
+| Continuous deployment | Not started |
 
 ## What is built
 
@@ -196,6 +197,7 @@ The model forecasts daily energy only; the daily peak is deferred to v2.
     docs/data_inventory.md     source formats and parsing rules
     infra/                     Terraform for the AWS collector and forecaster
     Dockerfile                 forecaster Lambda image
+    site/                      public page (HTML, CSS, JavaScript; data.json written daily)
     scripts/                   collector, downloads, table builders, data checks
     src/sadi_forecast/         parsers, tables, features, models, evaluation
     tests/                     pytest suite (fake CAMMESA server for the collector)

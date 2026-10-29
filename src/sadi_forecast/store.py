@@ -8,6 +8,7 @@ the archive under data/raw/ is read in place.
 from __future__ import annotations
 
 import io
+import mimetypes
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -67,7 +68,8 @@ class S3Store:
         return body
 
     def write(self, key: str, body: bytes) -> None:
-        self.s3.put_object(Bucket=self.bucket, Key=key, Body=body)
+        kind = mimetypes.guess_type(key)[0] or "application/octet-stream"
+        self.s3.put_object(Bucket=self.bucket, Key=key, Body=body, ContentType=kind)
 
     def exists(self, key: str) -> bool:
         resp = self.s3.list_objects_v2(Bucket=self.bucket, Prefix=key, MaxKeys=1)

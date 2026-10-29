@@ -325,3 +325,13 @@
 - Change: image sadi-forecaster:2026-10-29-1 in ECR; Terraform added the forecaster Lambda, its role and policies, daily (09:30 ART) and monthly (day 21, 03:00 ART) schedules, error and missing-run alarms, the ECR lifecycle policy and the collector's 09:00 documents run (12 resources added, none changed or destroyed). State, champion model 2026-10-29 and the first forecast (2026-10-30) uploaded from the PC.
 - Evidence: first invocation by hand (2026-10-29 07:42 ART): status 200; 6 programme documents archived on S3 and absent from the PC table were added to the state; no new Post Operativo documents; the existing 2026-10-30 forecast (373,937.8 MWh, issued 06:47 on the PC) returned unchanged. First scheduled forecast: 2026-10-31, issued 2026-10-30 09:30.
 - Previous state: forecaster not deployed.
+
+## 2026-10-29 — Public page design
+- Change (Fran: publishing derived daily values is covered by CAMMESA's confirmation of 2026-10-24; caution on security): static page (site/: index.html, app.js, style.css; no external code, chart drawn in SVG by the page's own script, data inserted as text only) in a separate private bucket behind CloudFront with origin access control; response headers: Content-Security-Policy limited to the page's own files, no framing, nosniff, no referrer, HSTS; HTTPS only; cache 5 minutes; price class 100; no WAF (USD 5+/month, five times the budget; the free tier covers about 10 million views of a 100 KB page and the budget alarm covers the rest). The daily run writes data.json (last 90 days: forecasts, provisional and definitive actuals, operator programme, errors; live error summary on the days where both the model and the operator programme exist). The offline evaluation table on the page shows the hybrid's test-year number with the "already seen" note.
+- Evidence: page checked in a headless browser with the same Content-Security-Policy, light and dark schemes, 1,100 and 390 px widths: no console errors, no horizontal scroll.
+- Previous state: SPEC 7 named a dashboard without a design.
+
+## 2026-10-29 — Public page deployed
+- Change: image sadi-forecaster:2026-10-29-2 (writes data.json); Terraform added the site bucket, origin access control, cache and security-header policies, the CloudFront distribution, the bucket policy and the forecaster's data.json permission (10 added, 2 changed, 0 destroyed); page files uploaded; data.json written by a "site" invocation. Address: https://d32m7h2zphotl6.cloudfront.net.
+- Evidence: the page responds 200 through CloudFront with Content-Security-Policy, Strict-Transport-Security, X-Frame-Options DENY, X-Content-Type-Options nosniff and Referrer-Policy no-referrer; a direct request to the site bucket returns 403.
+- Previous state: page not deployed.

@@ -17,3 +17,11 @@ output "forecaster_repository_url" {
 output "forecaster_function_name" {
   value = aws_lambda_function.forecaster.function_name
 }
+
+output "site_bucket" {
+  value = aws_s3_bucket.site.bucket
+}
+
+output "site_url" {
+  value = "https://${aws_cloudfront_distribution.site.domain_name}"
+}

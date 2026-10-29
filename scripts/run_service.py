@@ -28,15 +28,19 @@ ROOT = Path(__file__).resolve().parents[1]
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["daily", "monthly", "score"])
+    p.add_argument("mode", choices=["daily", "monthly", "score", "site"])
     p.add_argument("--bucket")
     p.add_argument("--root", type=Path, default=ROOT / "data")
     p.add_argument("--at", type=dt.datetime.fromisoformat)
     args = p.parse_args(argv)
     store: Store = S3Store(args.bucket) if args.bucket else LocalStore(args.root)
+    # Local runs write the page data next to the page (site/data.json, not committed).
+    site = None if args.bucket else LocalStore(ROOT / "site")
     at = args.at or service.now_art()
     if args.mode == "daily":
-        out = service.daily(store, at)
+        out = service.daily(store, at, site=site)
+    elif args.mode == "site":
+        out = {"site_days": service.publish_site(store, site or store, at)}
     elif args.mode == "monthly":
         out = service.monthly(store, at)
     else:

@@ -102,7 +102,8 @@ resource "aws_lambda_function" "forecaster" {
 
   environment {
     variables = {
-      BUCKET = aws_s3_bucket.raw.bucket
+      BUCKET      = aws_s3_bucket.raw.bucket
+      SITE_BUCKET = aws_s3_bucket.site.bucket
     }
   }
 
