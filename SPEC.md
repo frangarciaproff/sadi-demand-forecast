@@ -1,7 +1,8 @@
 # SPEC — sadi-demand-forecast
 
 Status: v0.8 (2026-10-29). v0.8: D8 summation excludes YACYHIPY; validation decision sequence
-run (family F-tree, window 5 years, weather M-fc; DECISIONS 2026-10-29); O15 narrowed.
+run (family F-tree, window 5 years, weather M-fc; DECISIONS 2026-10-29); O15 narrowed; S1/S2
+thresholds fixed; test evaluated once (S1 passed, S2 failed; DECISIONS 2026-10-29).
 v0.7 (2026-10-29), frozen until backtest results. v0.7 applies the 2026-10-29 audit
 (label embargo in refits, backtest start, four-week reference level, scoring caveats, S4).
 v0.6: target definition and source, live data handling. Where docs/method_notes.md (written
@@ -211,9 +212,15 @@ with three years of history). The test is not used for this choice.
 
 Thresholds are derived from validation-period measurements (B0 and B1 errors 2024-10 → 2025-09)
 and fixed, with their derivation, before the test is evaluated. Structure:
-- S1: skill vs B0 on test above a threshold derived from validation, CI lower bound > 0.
-- S2: MAPE on test vs B1's test MAPE within a margin derived from validation.
-- S3: forward test: same comparison after ≥ 90 live days.
+- S1: skill vs B0 on test (1 − MAE_model / MAE_B0) ≥ 0.50 and the lower bound of its 95 % CI > 0.
+  Validation: 0.62 (CI 0.55–0.67), quarters 0.53–0.69 (MAPE-based); 0.50 sits below the worst quarter and the
+  CI lower bound, leaving room for a different year (the CI covers sampling within one year only).
+- S2: non-inferiority to B1: upper bound of the 95 % CI of MAPE_model − MAPE_B1 on test < +0.50
+  percentage points (about 15 % of B1's MAPE). Validation: −0.03 (CI −0.46 to +0.39). Demanding by
+  design: with the validation CI width the model must roughly tie B1 to pass.
+- Fixed 2026-10-29 (Fran), before the test was evaluated. Bias and spread vs B1 are reported
+  next to S2, not as thresholds.
+- S3: forward test: same S1 and S2 rules after ≥ 90 live days.
 - S4: over 60 days on AWS, ≥ 95 % of the D6 programmes and D8 daily reports published by
   CAMMESA are archived within 24 h of publication (verify mode).
 - S5: forecast produced and scored automatically for ≥ 95 % of days over 60 days.

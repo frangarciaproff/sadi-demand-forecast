@@ -21,7 +21,7 @@ As of 2026-10-29.
 | Target definition | Fixed and checked against the operator's balance (below) |
 | Weather inputs | Reanalysis (ERA5) and 48-hour-lead forecasts (GFS) for 15 points, downloaded |
 | Feature table and baselines | Built: lags as known at the issue time, calendar, demand-weighted temperature; baseline errors in [`results/baselines.json`](results/baselines.json) |
-| Models, backtests | Decision sequence run on the validation year (below); test year not evaluated |
+| Models, backtests | Decision sequence on the validation year; test year evaluated once (below) |
 | Forecasts, scoring, dashboard, continuous deployment | Not started |
 
 ## What is built
@@ -112,8 +112,7 @@ Other measured findings that shaped the design (details and numbers in DECISIONS
 Validation year 2024-10-01 → 2025-09-30, forecasts issued at 10:00 on the day before, monthly
 refits that only use targets already published at the refit date, weather forecast inputs
 (GFS, 48-hour lead). Decisions were taken in a fixed order with rules written down before the
-first fit (DECISIONS 2026-10-29). The test year (2025-10-01 → 2026-09-30) has not been
-evaluated.
+first fit (DECISIONS 2026-10-29).
 
 | Step | Compared | Chosen | Validation error (MAPE) |
 |---|---|---|---|
@@ -138,6 +137,32 @@ programme), which points to information it does not yet use. Training on reanaly
 forecasting with forecast inputs costs about 0.9 percentage points; with reanalysis inputs
 on the forecast day (not available in production; step-1 configuration) the trees reach 2.81 %.
 
+## Test results
+
+The test year 2025-10-01 → 2026-09-30 was evaluated once, after the configuration and the two
+success thresholds were fixed ([`results/test/test_evaluation.json`](results/test/test_evaluation.json)).
+The thresholds were set to be demanding.
+
+| Forecast (362 days) | MAPE | 95 % CI | Mean error (bias) | SD of error |
+|---|---|---|---|---|
+| Model | 3.41 % | 3.06–3.75 % | −0.05 % | 4.39 % |
+| Operator programme | 3.09 % | 2.76–3.45 % | +2.72 % | 2.90 % |
+| Same weekday, median of 4 weeks | 8.26 % | 7.27–9.34 % | +0.12 % | 10.36 % |
+
+| Criterion | Target | Result | |
+|---|---|---|---|
+| Skill against the 4-week median (1 − MAE ratio) | ≥ 0.50, CI above 0 | 0.59 (CI 0.54–0.65) | passed |
+| Not worse than the operator's programme by more than 0.5 points of MAPE | CI upper bound < +0.50 | +0.32 (CI −0.10 to +0.68) | failed |
+
+The model is unbiased and 59 % better than the seasonal baseline. Against the operator's
+programme it is 0.32 points worse on average; the difference is not statistically
+significant (Diebold-Mariano p = 0.11), but the data cannot rule out a gap larger than the
+0.5-point margin, so the non-inferiority target is not met. The programme's errors are
+tighter (SD 2.90 % against 4.39 %) once its deliberate overestimate is set aside. The model
+beat the programme in one quarter of four (July–September 2026: 2.88 % against 3.18 %).
+Errors on the 9 out-of-range hot days: model 5.29 %, programme 4.41 %. Days with load
+shedding are not reported separately yet (no source list).
+
 ## Repository layout
 
     SPEC.md                    design
@@ -149,6 +174,7 @@ on the forecast day (not available in production; step-1 configuration) the tree
     tests/                     pytest suite (fake CAMMESA server for the collector)
     results/eda/               aggregate results of the data checks (no raw values)
     results/backtest/          validation scores and decisions (no raw values)
+    results/test/              the single test evaluation
 
 ## Running it
 
@@ -161,6 +187,7 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/).
     uv run python scripts/check_supply_balance.py
     uv run python scripts/build_features.py
     uv run python scripts/backtest.py --step family    # then --step window, --step weather
+    uv run python scripts/evaluate_test.py             # once; refuses if its output exists
 
 Deploying the collector: `terraform -chdir=infra init`, `plan`, `apply` with an AWS
 profile and the variables in `infra/terraform.tfvars.example`.
