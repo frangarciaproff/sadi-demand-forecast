@@ -5,12 +5,12 @@ locals {
   bucket_name = "sadi-demand-raw-${data.aws_caller_identity.current.account_id}"
   timezone    = "America/Argentina/Buenos_Aires"
 
-  # docs_morning runs before the forecaster (09:30): reports published overnight, before the 10:00 issue.
+  # docs_morning runs before the forecaster (09:55): reports published before the 10:00 issue.
   schedules = {
     snapshot     = { cron = "cron(30 0,6,12,18 * * ? *)", input = jsonencode({ mode = "snapshot", regions = var.regions }) }
     day          = { cron = "cron(15 1 * * ? *)", input = jsonencode({ mode = "day", regions = var.regions }) }
     docs         = { cron = "cron(30 23 * * ? *)", input = jsonencode({ mode = "docs", days = 8 }) }
-    docs_morning = { cron = "cron(0 9 * * ? *)", input = jsonencode({ mode = "docs", days = 8 }) }
+    docs_morning = { cron = "cron(40 9 * * ? *)", input = jsonencode({ mode = "docs", days = 8 }) }
   }
 }
 
@@ -72,52 +72,33 @@ resource "aws_cloudwatch_log_group" "lambda" {
   retention_in_days = 30
 }
 
-data "aws_iam_policy_document" "lambda_assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
+# IAM roles and their policies live in infra/bootstrap (applied from the PC only), so
+# the GitHub deploy role can pass them but never change them.
+data "aws_iam_role" "collector" {
+  name = "sadi-collector-lambda"
+}
+
+data "aws_iam_role" "scheduler" {
+  name = "sadi-collector-scheduler"
+}
+
+removed {
+  from = aws_iam_role.lambda
+  lifecycle {
+    destroy = false
   }
 }
 
-resource "aws_iam_role" "lambda" {
-  name               = "${local.name}-lambda"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
-}
-
-data "aws_iam_policy_document" "lambda" {
-  statement {
-    sid       = "WriteRawOnly"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.raw.arn}/raw/cammesa/*"]
+removed {
+  from = aws_iam_role.scheduler
+  lifecycle {
+    destroy = false
   }
-  statement {
-    sid       = "CheckExistingDocs"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.raw.arn]
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["raw/cammesa/docs/*"]
-    }
-  }
-  statement {
-    sid       = "Logs"
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.lambda.arn}:*"]
-  }
-}
-
-resource "aws_iam_role_policy" "lambda" {
-  role   = aws_iam_role.lambda.id
-  policy = data.aws_iam_policy_document.lambda.json
 }
 
 resource "aws_lambda_function" "collector" {
   function_name    = local.name
-  role             = aws_iam_role.lambda.arn
+  role             = data.aws_iam_role.collector.arn
   runtime          = "python3.12"
   handler          = "handler.handler"
   architectures    = ["arm64"]
@@ -132,7 +113,7 @@ resource "aws_lambda_function" "collector" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda, aws_iam_role_policy.lambda]
+  depends_on = [aws_cloudwatch_log_group.lambda]
 }
 
 resource "aws_lambda_function_event_invoke_config" "collector" {
@@ -141,33 +122,6 @@ resource "aws_lambda_function_event_invoke_config" "collector" {
 }
 
 # --- Schedules (EventBridge Scheduler, Argentina time) ---
-
-data "aws_iam_policy_document" "scheduler_assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["scheduler.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "scheduler" {
-  name               = "${local.name}-scheduler"
-  assume_role_policy = data.aws_iam_policy_document.scheduler_assume.json
-}
-
-data "aws_iam_policy_document" "scheduler" {
-  statement {
-    actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.collector.arn]
-  }
-}
-
-resource "aws_iam_role_policy" "scheduler" {
-  role   = aws_iam_role.scheduler.id
-  policy = data.aws_iam_policy_document.scheduler.json
-}
 
 resource "aws_scheduler_schedule_group" "collector" {
   name = local.name
@@ -187,7 +141,7 @@ resource "aws_scheduler_schedule" "collector" {
 
   target {
     arn      = aws_lambda_function.collector.arn
-    role_arn = aws_iam_role.scheduler.arn
+    role_arn = data.aws_iam_role.scheduler.arn
     input    = each.value.input
 
     retry_policy {

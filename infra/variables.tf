@@ -5,14 +5,15 @@ variable "region" {
 }
 
 variable "aws_profile" {
-  description = "AWS CLI profile (IAM Identity Center)."
+  description = "AWS CLI profile (IAM Identity Center) for runs from the PC; null in GitHub Actions (OIDC credentials)."
   type        = string
-  default     = "electro"
+  default     = null
 }
 
 variable "alert_email" {
   description = "Email for collector failure alarms and budget alerts."
   type        = string
+  sensitive   = true # kept out of plan output (public CI logs)
 }
 
 variable "regions" {

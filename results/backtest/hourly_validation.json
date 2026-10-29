@@ -1,0 +1,58 @@
+{
+  "period": [
+    "2024-10-01",
+    "2025-09-30"
+  ],
+  "days_with_s0_s1": 365,
+  "common_days_with_b1": 358,
+  "S1": {
+    "days": 358,
+    "hourly_mape_pct": 3.908,
+    "hourly_bias_pct": 0.144,
+    "peak_mape_pct": 3.423,
+    "peak_bias_pct": -0.066,
+    "peak_hour_mean_abs_error_h": 1.16,
+    "peak_hour_within_1h_share": 0.894
+  },
+  "S0": {
+    "days": 358,
+    "hourly_mape_pct": 4.327,
+    "hourly_bias_pct": 0.187,
+    "peak_mape_pct": 3.467,
+    "peak_bias_pct": -0.202,
+    "peak_hour_mean_abs_error_h": 1.3,
+    "peak_hour_within_1h_share": 0.863
+  },
+  "B1": {
+    "days": 358,
+    "hourly_mape_pct": 4.136,
+    "hourly_bias_pct": 3.033,
+    "peak_mape_pct": 3.797,
+    "peak_bias_pct": 3.122,
+    "peak_hour_mean_abs_error_h": 1.08,
+    "peak_hour_within_1h_share": 0.905
+  },
+  "dm_s1_vs_s0_two_sided": {
+    "n_days": 358,
+    "mean_loss_difference": -0.419,
+    "statistic_hln": -8.726,
+    "p_value": 0.0,
+    "alternative": "two-sided",
+    "hac_lag": 5
+  },
+  "dm_chosen_vs_b1_two_sided": {
+    "n_days": 358,
+    "mean_loss_difference": -0.2271,
+    "statistic_hln": -1.309,
+    "p_value": 0.1914,
+    "alternative": "two-sided",
+    "hac_lag": 5
+  },
+  "ci95_hourly_mape_s1_minus_s0": [
+    -0.5227,
+    -0.3321
+  ],
+  "decision": {
+    "shape_model": "S1"
+  }
+}

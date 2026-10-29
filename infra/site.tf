@@ -64,7 +64,7 @@ resource "aws_cloudfront_response_headers_policy" "site" {
   name = "sadi-demand-site-security"
   security_headers_config {
     content_security_policy {
-      content_security_policy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content_security_policy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'"
       override                = true
     }
     content_type_options {
@@ -142,17 +142,4 @@ resource "aws_s3_bucket_policy" "site" {
   bucket     = aws_s3_bucket.site.id
   policy     = data.aws_iam_policy_document.site_bucket.json
   depends_on = [aws_s3_bucket_public_access_block.site]
-}
-
-data "aws_iam_policy_document" "forecaster_site" {
-  statement {
-    sid       = "WritePageDataOnly"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.site.arn}/data.json"]
-  }
-}
-
-resource "aws_iam_role_policy" "forecaster_site" {
-  role   = aws_iam_role.forecaster.id
-  policy = data.aws_iam_policy_document.forecaster_site.json
 }

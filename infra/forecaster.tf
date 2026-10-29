@@ -9,8 +9,9 @@
 locals {
   forecaster = "sadi-forecaster"
   forecaster_schedules = {
-    daily   = { cron = "cron(30 9 * * ? *)", input = jsonencode({ mode = "daily" }) }
+    daily   = { cron = "cron(55 9 * * ? *)", input = jsonencode({ mode = "daily" }) }
     monthly = { cron = "cron(0 3 21 * ? *)", input = jsonencode({ mode = "monthly" }) }
+    evening = { cron = "cron(50 23 * * ? *)", input = jsonencode({ mode = "evening" }) }
   }
 }
 
@@ -41,55 +42,20 @@ resource "aws_cloudwatch_log_group" "forecaster" {
   retention_in_days = 30
 }
 
-resource "aws_iam_role" "forecaster" {
-  name               = "${local.forecaster}-lambda"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+data "aws_iam_role" "forecaster" {
+  name = "sadi-forecaster-lambda"
 }
 
-data "aws_iam_policy_document" "forecaster" {
-  statement {
-    sid     = "ReadArchive"
-    actions = ["s3:GetObject"]
-    resources = [
-      "${aws_s3_bucket.raw.arn}/raw/*",
-      "${aws_s3_bucket.raw.arn}/state/*",
-      "${aws_s3_bucket.raw.arn}/models/*",
-      "${aws_s3_bucket.raw.arn}/forecasts/*",
-      "${aws_s3_bucket.raw.arn}/scores/*",
-    ]
+removed {
+  from = aws_iam_role.forecaster
+  lifecycle {
+    destroy = false
   }
-  statement {
-    sid     = "WriteOwnOutputs"
-    actions = ["s3:PutObject"]
-    resources = [
-      "${aws_s3_bucket.raw.arn}/raw/open_meteo/*",
-      "${aws_s3_bucket.raw.arn}/raw/cammesa/sintesis/*",
-      "${aws_s3_bucket.raw.arn}/state/*",
-      "${aws_s3_bucket.raw.arn}/models/*",
-      "${aws_s3_bucket.raw.arn}/forecasts/*",
-      "${aws_s3_bucket.raw.arn}/scores/*",
-    ]
-  }
-  statement {
-    sid       = "List"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.raw.arn]
-  }
-  statement {
-    sid       = "Logs"
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.forecaster.arn}:*"]
-  }
-}
-
-resource "aws_iam_role_policy" "forecaster" {
-  role   = aws_iam_role.forecaster.id
-  policy = data.aws_iam_policy_document.forecaster.json
 }
 
 resource "aws_lambda_function" "forecaster" {
   function_name = local.forecaster
-  role          = aws_iam_role.forecaster.arn
+  role          = data.aws_iam_role.forecaster.arn
   package_type  = "Image"
   image_uri     = "${aws_ecr_repository.forecaster.repository_url}:${var.forecaster_image_tag}"
   architectures = ["x86_64"]
@@ -107,24 +73,12 @@ resource "aws_lambda_function" "forecaster" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.forecaster, aws_iam_role_policy.forecaster]
+  depends_on = [aws_cloudwatch_log_group.forecaster]
 }
 
 resource "aws_lambda_function_event_invoke_config" "forecaster" {
   function_name          = aws_lambda_function.forecaster.function_name
   maximum_retry_attempts = 1 # a forecast is written once; a retry only fills what failed
-}
-
-data "aws_iam_policy_document" "scheduler_forecaster" {
-  statement {
-    actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.forecaster.arn]
-  }
-}
-
-resource "aws_iam_role_policy" "scheduler_forecaster" {
-  role   = aws_iam_role.scheduler.id
-  policy = data.aws_iam_policy_document.scheduler_forecaster.json
 }
 
 resource "aws_scheduler_schedule" "forecaster" {
@@ -141,7 +95,7 @@ resource "aws_scheduler_schedule" "forecaster" {
 
   target {
     arn      = aws_lambda_function.forecaster.arn
-    role_arn = aws_iam_role.scheduler.arn
+    role_arn = data.aws_iam_role.scheduler.arn
     input    = each.value.input
 
     retry_policy {

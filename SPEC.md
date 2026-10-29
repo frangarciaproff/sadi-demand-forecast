@@ -1,6 +1,7 @@
 # SPEC — sadi-demand-forecast
 
-Status: v0.9 (2026-10-29). v0.9: production design (section 7).
+Status: v1.0 (2026-10-29). v1.0: v2 design for the hourly curve and the daily peak (section 11).
+v0.9 (2026-10-29): production design (section 7).
 v0.8 (2026-10-29). v0.8: D8 summation excludes YACYHIPY; validation decision sequence
 run (family F-tree, window 5 years, weather M-fc; DECISIONS 2026-10-29); O15 narrowed; S1/S2
 thresholds fixed; test evaluated once (S1 passed, S2 failed; DECISIONS 2026-10-29). Re-audit:
@@ -251,10 +252,11 @@ Fixed 2026-10-29 (Fran: JSON in S3, training in Lambda; DECISIONS 2026-10-29). N
 always-on servers, API Gateway, NAT gateway, SageMaker or GPUs.
 
 - Collector (P0 Lambda, unchanged) archives raw documents to s3://<raw bucket>/raw/cammesa/.
-  An extra documents run at 09:00 ART catches reports published overnight before the issue.
+  An extra documents run at 09:40 ART catches reports published before the issue.
 - Forecaster: one Lambda from a container image (ECR; Python, the package, Node + mdb-reader for
   the Access databases), two events:
-  - daily, 09:30 ART: (1) update the state tables with documents not yet in them (D6 and D8 listed
+  - daily, 09:55 ART (after the collector's 09:40 documents run; documents published in the
+    last minutes before 10:00 are the only difference from the backtest's information set): (1) update the state tables with documents not yet in them (D6 and D8 listed
     in the last 45 days); (2) fetch the live GFS inputs (previous_day2, 48 h lead) and merge them
     into the weather table; (3) forecast D + 1 with the champion model (same code as
     scripts/forecast.py) and write forecasts/<day>.json once (never overwritten); (4) score every
@@ -292,7 +294,7 @@ always-on servers, API Gateway, NAT gateway, SageMaker or GPUs.
 ## 8. Non-goals (v1)
 
 Deferred lines, with reasons and revisit points: docs/ROADMAP.md. In v1 specifically excluded:
-hourly target, regional targets, probabilistic forecasts, deep learning, ARIMA-type models,
+regional targets, probabilistic forecasts, deep learning, ARIMA-type models,
 extra weather variables, public API, conversational interface, redistribution of CAMMESA data.
 
 ## 9. Review points
@@ -309,8 +311,42 @@ extra weather variables, public API, conversational interface, redistribution of
   monthly median within ±0.06 %, 2018 → 2026-09); isolated days far off (2022, 2023).
 - O16: hourly target for T2: D8 hourly supply − D7 hourly exports; check D8 hourly vs D7 hourly.
 - O10: FALLAS meaning (load shedding / unserved energy).
-- O11: remote Terraform state before CD.
+- O11: remote Terraform state before CD (design 2026-10-29: infra/bootstrap, deploy.yml; closed when the first deploy from GitHub succeeds).
 - Resolved: O1 (2026-10-24), O2 (2026-10-23), O4 → method_notes, O5 (2026-10-24), O6, O7 (GFS),
   O8, O9 and O12 (obsolete: D3 and D5 are not targets), O13 (2026-10-26: supplied energy from
   D7, live values from D8), O3 (2026-10-28: point weights, src/sadi_forecast/weights.py),
   O14 (2026-10-28: validity check, 2.2).
+
+## 11. v2: hourly curve (T3) and daily peak (T2)
+
+Written 2026-10-29 before any hourly model was fitted (ROADMAP F3, F14).
+
+- T3: hourly supplied energy H(D, h), h = 1..24 (MWh in hour h = mean MW), hour h covering
+  [h − 1, h) ART. T2 (daily peak, MW) = max_h H(D, h). Definitive: D7 hourly supply − D7 hourly
+  exports, latest base. Provisional: D8 hourly supply (s01–s24) − D6 programmed hourly exports.
+  O16 check (data ≤ 2025-09-30): D8 complement vs D7 hourly supply, 2,830 days, median absolute
+  difference 0.001 %, 99th percentile 0.35 %, same hour numbering (a one-hour shift gives 2.7 %).
+- Forecast = daily energy from v1 (unchanged) × hourly shares s(D, h), Σ_h s = 1, so the 24 hours
+  always add up to the v1 daily forecast.
+- Shape baseline S0: hourly shares of the reference days (the same-weekday days D−7…D−28 that
+  v1's reference level uses, in the version known at the issue time), median per hour,
+  renormalised. Needs at least two days.
+- Shape model S1: gradient-boosted trees (v1 settings, absolute-error loss) on one row per
+  (day, hour), target ln(s / s0). Features: hour; dow; day_kind, prev_day_kind, next_day_kind;
+  doy_sin, doy_cos; demand-weighted GFS temperature at the start of hour h on D; its difference
+  from the mean of the reference days at the same hour; the daily Δ temperature of v1. Shares
+  = s0 · exp(prediction), renormalised. Training: 5-year window, GFS days only, monthly refits
+  with the label embargo of 4.1 (as v1).
+- Comparators on the same days: S0 × v1 daily forecast, and B1 hourly (D6 t01–t24).
+- Decision (validation 2024-10-01 → 2025-09-30, the only choice): S1 is adopted if its hourly
+  MAPE is lower than S0's and a two-sided Diebold-Mariano test on the daily mean absolute
+  hourly percentage error gives p < 0.05; otherwise S0.
+- Metrics: hourly MAPE (all hours), T2 MAPE, peak-hour error (|predicted − actual hour of the
+  maximum|, share within 1 hour), bias; every comparison on the days all three exist.
+- Test year: evaluated once after the decision, labelled "daily totals already seen" (the v1
+  daily model was scored on it; the shape model was not). The clean evaluation is the forward
+  test: 90 live days.
+- Review point R6: independent audit of this section, the code and the validation results,
+  before the single test evaluation.
+- Production: the forecast record adds 24 hourly values and the peak; the page adds tomorrow's
+  curve next to the operator's hourly programme.

@@ -150,7 +150,7 @@ function chart(data) {
   const show = (evt) => {
     const box = svg.getBoundingClientRect();
     const px = ((evt.clientX - box.left) * W) / box.width;
-    const i = Math.max(0, Math.min(n - 1, Math.round(((px - PAD.left) * (n - 1)) / (W - PAD.left - PAD.right))));
+    const i = n === 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round(((px - PAD.left) * (n - 1)) / (W - PAD.left - PAD.right))));
     const r = rows[i];
     cross.setAttribute("x1", x(i));
     cross.setAttribute("x2", x(i));

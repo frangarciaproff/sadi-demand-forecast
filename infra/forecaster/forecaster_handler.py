@@ -4,6 +4,7 @@ Events:
     {"mode": "daily"}    state update, live weather, forecast of tomorrow, scores
     {"mode": "monthly"}  Síntesis, supply and feature tables, retrain, champion
     {"mode": "score"}    scores only
+    {"mode": "evening"}  documents published today (operator programme), page data
     {"mode": "site"}     public page data only (site bucket)
 """
 
@@ -28,6 +29,8 @@ def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     at = service.now_art()
     if mode == "daily":
         out = service.daily(store, at, site=site)
+    elif mode == "evening":
+        out = service.evening(store, site, at)
     elif mode == "site" and site is not None:
         out = {"site_days": service.publish_site(store, site, at)}
     elif mode == "monthly":

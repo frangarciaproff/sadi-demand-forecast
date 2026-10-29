@@ -1,2 +1,4 @@
-alert_email          = "your-email@example.com"
-forecaster_image_tag = "2026-10-29-1"
+alert_email = "your-email@example.com"
+aws_profile = "electro"
+# forecaster_image_tag is set by the deploy workflow (commit hash). For a local plan,
+# pass the deployed tag: terraform plan -var forecaster_image_tag=<tag>

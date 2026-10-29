@@ -22,7 +22,7 @@ As of 2026-10-29.
 | Weather inputs | Reanalysis (ERA5) and 48-hour-lead forecasts (GFS) for 15 points, downloaded |
 | Feature table and baselines | Built: lags as known at the issue time, calendar, demand-weighted temperature; baseline errors in [`results/baselines.json`](results/baselines.json) |
 | Models, backtests | Daily energy: decision sequence on the validation year, test year evaluated once, re-audit checks (below); daily peak deferred to v2 |
-| Forecasts | Running on AWS Lambda since 2026-10-29: daily forecast at 09:30 ART, scores against actuals and the operator's programme, monthly retraining |
+| Forecasts | Running on AWS Lambda since 2026-10-29: daily forecast at 09:55 ART, scores against actuals and the operator's programme, monthly retraining |
 | Public page | [d32m7h2zphotl6.cloudfront.net](https://d32m7h2zphotl6.cloudfront.net), updated daily |
 | Continuous deployment | Not started |
 

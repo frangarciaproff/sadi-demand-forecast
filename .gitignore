@@ -6,6 +6,7 @@
 __pycache__/
 COMMANDS_CHEATSHEET.md
 infra/.terraform/
+infra/bootstrap/.terraform/
 infra/build/
 infra/tfplan
 *.tfstate
@@ -21,3 +22,4 @@ docs/personal_comments.md
 node_modules/
 /models/
 /site/data.json
+infra/bootstrap/tfplan

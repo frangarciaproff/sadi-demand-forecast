@@ -223,6 +223,19 @@ def _pct(pred: float | None, actual: float | None) -> float | None:
     return round(100 * (pred / actual - 1), 3)
 
 
+def provisional_actuals(versions: pd.DataFrame) -> pd.DataFrame:
+    """Provisional actual per day (SPEC 2.2): the latest version published so far that
+    passes the validity check (a later complement replaces the daily report). Invalid
+    reports count as missing; a day with none has no provisional actual."""
+    return (
+        versions[versions["valid"]]
+        .sort_values("published_art")
+        .groupby("date")
+        .tail(1)
+        .set_index("date")
+    )
+
+
 def score(store: Store) -> int:
     """Score every forecast whose actuals exist (provisional, then definitive)."""
     days = [
@@ -233,22 +246,15 @@ def score(store: Store) -> int:
     if not days:
         return 0
     t = _tables(store)
-    versions = valid_versions(t["postop"], t["b1"])
-    first = (
-        versions[versions["kind"] == "daily"]
-        .sort_values("published_art")
-        .groupby("date")
-        .head(1)
-        .set_index("date")
-    )
+    latest = provisional_actuals(valid_versions(t["postop"], t["b1"]))
     defin = definitive_daily(t["postop"], t["supply"]).dropna(subset=["target_mwh"])
     target = dict(zip(defin["date"], defin["target_mwh"].astype(float), strict=True))
     b1_rows = t["b1"].dropna(subset=["b1_total_mwh"])
     b1 = dict(
         zip(b1_rows["target_date"], b1_rows["b1_total_mwh"].astype(float), strict=True)
     )
-    prov_value = dict(zip(first.index, first["value_mwh"].astype(float), strict=True))
-    prov_valid = dict(zip(first.index, first["valid"].astype(bool), strict=True))
+    prov_value = dict(zip(latest.index, latest["value_mwh"].astype(float), strict=True))
+    prov_kind = dict(zip(latest.index, latest["kind"].astype(str), strict=True))
     n = 0
     for day in days:
         key = f"scores/{day.isoformat()}.json"
@@ -264,7 +270,7 @@ def score(store: Store) -> int:
             "b0_mwh": fc["reference_mwh"],
             "b1_mwh": b1_day,
             "provisional_mwh": prov_value.get(day),
-            "provisional_valid": prov_valid.get(day),
+            "provisional_source": prov_kind.get(day),
             "definitive_mwh": definitive,
         }
         if rec["provisional_mwh"] is None and rec["definitive_mwh"] is None:
@@ -306,6 +312,19 @@ def site_data(store: Store, now: dt.datetime) -> dict[str, Any]:
             "issued_at_art": fc.get("run_at_art"),
             "late": fc.get("late"),
         }
+    # The operator's programme for a day is published about 21:30 the evening before,
+    # so it is shown as soon as the state has it, before the day is scored.
+    if rows and store.exists(STATE["d6"]):
+        b1 = b1_daily(read_parquet(store, STATE["d6"])).dropna(subset=["b1_total_mwh"])
+        programme = dict(
+            zip(
+                (d.isoformat() for d in b1["target_date"]),
+                b1["b1_total_mwh"].astype(float),
+                strict=True,
+            )
+        )
+        for day, row in rows.items():
+            row["b1_mwh"] = programme.get(day)
     for key in store.list("scores/"):
         sc = json.loads(store.read(key))
         if sc["target_date"] in rows:
@@ -368,6 +387,16 @@ def publish_site(store: Store, site: Store, now: dt.datetime) -> int:
     data = site_data(store, now)
     site.write(SITE_DATA, _json(data))
     return len(data["days"])
+
+
+def evening(store: Store, site: Store | None, run_at: dt.datetime) -> dict[str, Any]:
+    """Evening event (after the collector's 23:30 run): add the documents published
+    today, including the operator's programme for tomorrow, and refresh the page."""
+    out: dict[str, Any] = {"run_at_art": run_at.isoformat(timespec="seconds")}
+    out["state"] = update_state(store, run_at.date())
+    if site is not None:
+        out["site_days"] = publish_site(store, site, run_at)
+    return out
 
 
 def daily(
