@@ -1,0 +1,35 @@
+{
+  "pre": "2017-01-01 to 2019-12-31",
+  "post": "2022-01-01 to 2024-12-31",
+  "method": "weekly block bootstrap, B=2000, 95% percentile intervals; no temperature or calendar adjustment (holidays fall inside weekdays)",
+  "n_days": {
+    "pre": 1076,
+    "post": 1020
+  },
+  "statistics": {
+    "mean_gwh_day": {
+      "pre": 368.4652,
+      "post": 385.6609,
+      "post_minus_pre_ci95": [
+        9.1664,
+        25.6714
+      ]
+    },
+    "weekday_weekend_ratio": {
+      "pre": 1.1302,
+      "post": 1.1131,
+      "post_minus_pre_ci95": [
+        -0.0328,
+        -0.0012
+      ]
+    },
+    "summer_winter_ratio": {
+      "pre": 1.0145,
+      "post": 1.0333,
+      "post_minus_pre_ci95": [
+        -0.03,
+        0.0735
+      ]
+    }
+  }
+}

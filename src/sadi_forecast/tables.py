@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import zipfile
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -30,7 +31,19 @@ log = logging.getLogger(__name__)
 WEEKLY = "PARTE_SEMANAL_UNIF"
 PROGRAMME = "PROGRAMACION_DIARIA"
 HOUR_COLS = [f"h{k:02d}" for k in range(1, N_HOURS + 1)]
+# Programme: hourly B1 total (net + losses + pumping) and programmed exports.
+TOTAL_HOUR_COLS = [f"t{k:02d}" for k in range(1, N_HOURS + 1)]
+EXPORT_HOUR_COLS = [f"x{k:02d}" for k in range(1, N_HOURS + 1)]
+
+
+def _sum_or_none(values: tuple[float, ...] | None) -> float | None:
+    return None if values is None else float(sum(values))
+
+
 _AREA_MEMBER_RE = re.compile(r"se\d\darea\.dem", re.IGNORECASE)
+# Corrupt archives found in the CAMMESA history (e.g. member name mismatch between the
+# central directory and the local header) raise one of these; the file is skipped.
+_ZIP_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, KeyError, OSError)
 
 
 def load_doc_index(raw_dir: Path, nemo: str) -> dict[str, dict[str, str]]:
@@ -41,6 +54,7 @@ def load_doc_index(raw_dir: Path, nemo: str) -> dict[str, dict[str, str]]:
             continue
         for doc in json.loads(path.read_bytes()):
             index[str(doc["id"])] = {
+                "nemo": str(doc.get("nemo", "")),
                 "fecha": str(doc.get("fecha", "")),
                 "hora": str(doc.get("hora") or ""),
                 "version": str(doc.get("version") or ""),
@@ -69,13 +83,16 @@ def build_weekly_area(raw_dir: Path) -> pd.DataFrame:
     for pub, doc_id, path in _iter_zips(raw_dir, WEEKLY):
         try:
             archive = zipfile.ZipFile(path)
-        except zipfile.BadZipFile:
-            log.warning("bad zip skipped: %s", path)
+        except _ZIP_ERRORS as exc:
+            log.warning("bad zip skipped: %s (%s)", path.name, exc)
             continue
         members = [n for n in archive.namelist() if _AREA_MEMBER_RE.fullmatch(n)]
         for member in members:
             try:
                 rows = parse_weekly_area(archive.read(member).decode("latin1"))
+            except _ZIP_ERRORS as exc:
+                log.warning("unreadable %s in %s: %s", member, path.name, exc)
+                continue
             except ValueError as exc:
                 log.warning("unparseable %s in %s: %s", member, path.name, exc)
                 continue
@@ -98,14 +115,17 @@ def build_weekly_area(raw_dir: Path) -> pd.DataFrame:
 
 
 def build_programme(raw_dir: Path) -> pd.DataFrame:
-    """National programmed demand: one row per (version, target day, source format)."""
+    """National programme: one row per (version, target day, source format).
+
+    h01-h24 net demand, t01-t24 B1 total (net + losses + pumping), x01-x24 exports.
+    """
     index = load_doc_index(raw_dir, PROGRAMME)
     records: list[dict[str, object]] = []
     for pub, doc_id, path in _iter_zips(raw_dir, PROGRAMME):
         try:
             archive = zipfile.ZipFile(path)
-        except zipfile.BadZipFile:
-            log.warning("bad zip skipped: %s", path)
+        except _ZIP_ERRORS as exc:
+            log.warning("bad zip skipped: %s (%s)", path.name, exc)
             continue
         names = {n.lower(): n for n in archive.namelist()}
         days = []
@@ -119,6 +139,9 @@ def build_programme(raw_dir: Path) -> pd.DataFrame:
             if "balance.csv" in names:
                 text = archive.read(names["balance.csv"]).decode("utf-8-sig")
                 days.append(parse_programme_csv(text, programme_target_date(path.name)))
+        except _ZIP_ERRORS as exc:
+            log.warning("unreadable programme %s: %s", path.name, exc)
+            continue
         except ValueError as exc:
             log.warning("unparseable programme %s: %s", path.name, exc)
             continue
@@ -131,8 +154,17 @@ def build_programme(raw_dir: Path) -> pd.DataFrame:
                 "target_date": d.target_date,
                 "source": d.source,
                 "energy_mwh": d.energy_mwh,
+                "total_mismatch_mwh": d.total_mismatch_mwh,
+                "losses_mwh": _sum_or_none(d.losses),
+                "pumping_mwh": _sum_or_none(d.pumping),
+                "exports_mwh": _sum_or_none(d.exports),
+                "b1_total_mwh": _sum_or_none(d.total_hourly),
             }
             rec.update(dict(zip(HOUR_COLS, d.hourly, strict=True)))
+            total = d.total_hourly or (None,) * N_HOURS
+            rec.update(dict(zip(TOTAL_HOUR_COLS, total, strict=True)))
+            exports = d.exports or (None,) * N_HOURS
+            rec.update(dict(zip(EXPORT_HOUR_COLS, exports, strict=True)))
             records.append(rec)
     return pd.DataFrame.from_records(records)
 

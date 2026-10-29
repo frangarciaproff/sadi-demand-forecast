@@ -109,12 +109,13 @@ def test_programme_txt_reads_national_block() -> None:
     assert day.source == "txt"
 
 
-def test_programme_txt_checks_total() -> None:
+def test_programme_txt_flags_total_mismatch() -> None:
     text = _balance_txt([1] * 24).replace(
         "     24\nDEMANDA BOMBEO", "     60\nDEMANDA BOMBEO", 1
     )
-    with pytest.raises(ValueError, match="add up"):
-        parse_programme_txt(text)
+    day = parse_programme_txt(text)
+    assert day.hourly == (1.0,) * 24
+    assert day.total_mismatch_mwh == 36.0
 
 
 def test_programme_csv_sums_regions() -> None:
@@ -135,3 +136,53 @@ def test_programme_target_date_from_file_name() -> None:
     assert programme_target_date("5D6F78_PD100106.zip") == dt.date(2010, 1, 6)
     with pytest.raises(ValueError):
         programme_target_date("SE421218.zip")
+
+
+def test_programme_csv_lowercase_header() -> None:
+    header = "tipo,rge,variable," + ",".join(f"h{k:02d}" for k in range(1, 25))
+    row = '"D","BAS","Demanda Neta",' + ",".join(["100"] * 24)
+    day = parse_programme_csv("\n".join([header, row]), dt.date(2025, 8, 22))
+    assert day.energy_mwh == 2400.0
+
+
+def test_programme_txt_components_and_exports_in_sin_block_only() -> None:
+    def line(label: str, v: int) -> str:
+        return (
+            label.ljust(44)
+            + "".join(str(v).rjust(7) for _ in range(24))
+            + str(24 * v).rjust(9)
+        )
+
+    text = "\n".join(
+        [
+            "BALANCE POR AREA DISCRIMINADO POR GRUPOS              DEL DIA  21/08/2021",
+            "SIN",
+            line("DEMANDA NETA", 100),
+            line("DEMANDA BOMBEO", 2),
+            line("PERDIDAS", 5),
+            line("EXP. CEMSSP1E", 10),
+            line("EXP. CEMUTESE", 1),
+            "GBA",
+            line("DEMANDA NETA", 40),
+            line("EXP. CEMSSP1E", 10),
+        ]
+    )
+    day = parse_programme_txt(text)
+    assert day.energy_mwh == 2400.0
+    assert day.losses == (5.0,) * 24
+    assert day.pumping == (2.0,) * 24
+    assert day.exports == (11.0,) * 24
+    assert day.total_hourly == (107.0,) * 24
+
+
+def test_programme_csv_components() -> None:
+    header = "TIPO,RGE,VARIABLE," + ",".join(f"H{k:02d}" for k in range(1, 25))
+    rows = [
+        '"D","BAS","Demanda Neta",' + ",".join(["100"] * 24),
+        '"D","BAS","Perdidas",' + ",".join(["7"] * 24),
+        '"D","CEN","Bombeo",' + ",".join(["3"] * 24),
+        '"D","NEA","Exportacion",' + ",".join(["4"] * 24),
+    ]
+    day = parse_programme_csv("\n".join([header, *rows]), dt.date(2025, 4, 29))
+    assert day.total_hourly == (110.0,) * 24
+    assert day.exports == (4.0,) * 24

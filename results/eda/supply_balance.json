@@ -1,0 +1,32 @@
+{
+  "tolerance_relative": 1e-05,
+  "distinct_days_within_tolerance_in_fully_matching_bases": 2191,
+  "first_day": "2018-01-01",
+  "last_day": "2023-12-31",
+  "bases": [
+    {
+      "base": "2021-12",
+      "first_day": "2018-01-01",
+      "last_day": "2021-12-31",
+      "days": 1461,
+      "days_within_tolerance": 1461,
+      "max_abs_relative_difference": 3.3306690738754696e-16
+    },
+    {
+      "base": "2022-12",
+      "first_day": "2019-01-01",
+      "last_day": "2022-12-31",
+      "days": 1461,
+      "days_within_tolerance": 1461,
+      "max_abs_relative_difference": 3.3306690738754696e-16
+    },
+    {
+      "base": "2023-12",
+      "first_day": "2020-01-01",
+      "last_day": "2023-12-31",
+      "days": 1461,
+      "days_within_tolerance": 1461,
+      "max_abs_relative_difference": 4.440892098500626e-16
+    }
+  ]
+}

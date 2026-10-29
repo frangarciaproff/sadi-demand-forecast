@@ -56,6 +56,7 @@ class FakeCammesa(http.server.BaseHTTPRequestHandler):
                 docs = [
                     {
                         "id": f"ID{a}",
+                        "nemo": q["nemo"].replace("_UNIF", "") + "_COMP",
                         "fecha": day,
                         "hora": "21:30",
                         "version": "v",

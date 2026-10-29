@@ -1,0 +1,78 @@
+{
+  "period": [
+    "2018-01-01",
+    "2024-09-30"
+  ],
+  "flags": {
+    "": 2148,
+    "complement_far_from_d7": 75
+  },
+  "multiple_complement_days": 90,
+  "complement_vs_d7_abs_pct": {
+    "median": 0.005,
+    "max": 59.8459
+  },
+  "daily_vs_definitive_abs_pct": {
+    "median": 0.087,
+    "p90": 0.856,
+    "p99": 6.983,
+    "max": 100.0
+  },
+  "thresholds": {
+    "r1": {
+      "q99": 0.0967,
+      "q99.5": 0.1108,
+      "q99.9": 0.1438,
+      "n": 2138,
+      "max": 0.3439
+    },
+    "r2": {
+      "q99": 0.299,
+      "q99.5": 0.3295,
+      "q99.9": 0.4153,
+      "n": 2131,
+      "max": 0.4261
+    }
+  },
+  "check": {
+    "q99": {
+      "k1": 0.0967,
+      "k2": 0.299,
+      "reports": 2316,
+      "flagged": 70,
+      "reports_off_by_more_than_2pct": 81,
+      "of_those_flagged": 21,
+      "known_errors_flagged": {
+        "2022-05-15": false,
+        "2022-08-15": true,
+        "2023-11-14": false
+      }
+    },
+    "q99.5": {
+      "k1": 0.1108,
+      "k2": 0.3295,
+      "reports": 2316,
+      "flagged": 44,
+      "reports_off_by_more_than_2pct": 81,
+      "of_those_flagged": 18,
+      "known_errors_flagged": {
+        "2022-05-15": false,
+        "2022-08-15": true,
+        "2023-11-14": false
+      }
+    },
+    "q99.9": {
+      "k1": 0.1438,
+      "k2": 0.4153,
+      "reports": 2316,
+      "flagged": 23,
+      "reports_off_by_more_than_2pct": 81,
+      "of_those_flagged": 15,
+      "known_errors_flagged": {
+        "2022-05-15": false,
+        "2022-08-15": true,
+        "2023-11-14": false
+      }
+    }
+  }
+}

@@ -7,6 +7,8 @@ license = "MIT"
 authors = [{ name = "Francisco García Soriano" }]
 requires-python = ">=3.12"
 dependencies = [
+    "access-parser>=0.0.5",
+    "matplotlib>=3.9",
     "openpyxl>=3.1",
     "pandas>=2.2",
     "pyarrow>=17",
@@ -20,6 +22,7 @@ dev = [
     "pre-commit>=4.0",
     "pytest>=8.3",
     "ruff>=0.8",
+    "types-openpyxl>=3.1",
 ]
 
 [build-system]
@@ -44,6 +47,10 @@ disallow_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["access_parser"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

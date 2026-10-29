@@ -17,39 +17,15 @@ from pathlib import Path
 
 import pandas as pd
 
+from sadi_forecast.config import EDA_CUTOFF as CUTOFF
+from sadi_forecast.daily import first_and_last, national_by_version
+
 ROOT = Path(__file__).resolve().parents[1]
 INTERIM = ROOT / "data" / "interim"
-CUTOFF = dt.date(2025, 9, 30)
-N_AREAS = 9
 OUTLIER_BAND = 0.03  # |ratio - yearly median| above this is an outlier
 SHIFT_MATCH = (
     0.01  # a ±1-day shift "explains" an outlier if it brings it within this band
 )
-
-
-def national_by_version(d5: pd.DataFrame) -> pd.DataFrame:
-    """Sum of areas per (version, date).
-
-    NaN unless all 9 areas are present and none is missing.
-    """
-    grp = d5.groupby(["doc_id", "pub_date", "pub_time", "date"])
-    out = grp.agg(
-        energy_mwh=("energy_mwh", "sum"),
-        n_areas=("area", "nunique"),
-        n_missing=("missing", "sum"),
-    ).reset_index()
-    complete = (out["n_areas"] == N_AREAS) & (out["n_missing"] == 0)
-    out.loc[~complete, "energy_mwh"] = float("nan")
-    return out
-
-
-def first_and_last(nat: pd.DataFrame) -> pd.DataFrame:
-    ok = nat.dropna(subset=["energy_mwh"]).sort_values(
-        ["date", "pub_date", "pub_time", "doc_id"]
-    )
-    first = ok.groupby("date").first()[["energy_mwh", "pub_date"]]
-    last = ok.groupby("date").last()[["energy_mwh", "pub_date"]]
-    return first.join(last, lsuffix="_first", rsuffix="_last").reset_index()
 
 
 def main() -> int:
@@ -111,7 +87,7 @@ def main() -> int:
     out = ROOT / "results" / "eda"
     out.mkdir(parents=True, exist_ok=True)
     (out / "d5_vs_d1_summary.json").write_text(
-        json.dumps(summary, indent=2, default=str), encoding="utf-8"
+        json.dumps(summary, indent=2, default=str) + "\n", encoding="utf-8"
     )
     print(yearly.round(4).to_string())
     print(json.dumps({k: v for k, v in summary.items() if k != "yearly"}, indent=2))

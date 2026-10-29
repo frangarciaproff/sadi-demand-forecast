@@ -27,6 +27,19 @@ _DAY_ROW_RE = re.compile(r"^(\d\d)/(\d\d) ([A-Z ])")
 _SECTION_RE = re.compile(r"^[A-Z][A-Z ]{3,}")
 _PD_NAME_RE = re.compile(r"PD(\d\d)(\d\d)(\d\d)", re.IGNORECASE)
 _DEL_DIA_RE = re.compile(r"DEL DIA\s+(\d{1,2})/(\d\d)/(\d{4})")
+# Region headers that close the national ("SIN") block of balance.txt.
+_REGION_HEADERS = {
+    "GBA",
+    "COM",
+    "BAS",
+    "NOA",
+    "CEN",
+    "CUY",
+    "NEA",
+    "CTMSG",
+    "LIT",
+    "PAT",
+}
 
 
 @dataclass(frozen=True)
@@ -55,6 +68,23 @@ class ProgrammeDay:
     target_date: dt.date
     hourly: tuple[float, ...]
     source: str  # "txt" or "csv"
+    # Printed daily total minus the sum of the hours (txt only). Rounding gives
+    # |x| <= 12; larger values are source inconsistencies, kept and flagged.
+    total_mismatch_mwh: float = 0.0
+    # Other national components, hourly MWh; None when the line is absent or unreadable.
+    losses: tuple[float, ...] | None = None
+    pumping: tuple[float, ...] | None = None
+    exports: tuple[float, ...] | None = None
+
+    @property
+    def total_hourly(self) -> tuple[float, ...] | None:
+        """Net demand + losses + pumping (the B1 total; exports excluded)."""
+        if self.losses is None or self.pumping is None:
+            return None
+        return tuple(
+            n + lo + pu
+            for n, lo, pu in zip(self.hourly, self.losses, self.pumping, strict=True)
+        )
 
     @property
     def energy_mwh(self) -> float:
@@ -124,30 +154,66 @@ def programme_target_date(file_name: str) -> dt.date:
     return dt.date(2000 + yy, mm, dd)
 
 
+def _hours_and_total(line: str) -> tuple[float, ...] | None:
+    """The last 25 fields of a balance.txt line (24 hours + total), if numeric."""
+    fields = line.split()[-(N_HOURS + 1) :]
+    try:
+        values = tuple(float(x) for x in fields)
+    except ValueError:
+        return None
+    return values if len(values) == N_HOURS + 1 else None
+
+
 def parse_programme_txt(text: str) -> ProgrammeDay:
-    """National ("SIN" block) programmed net demand from balance.txt."""
+    """National ("SIN" block) programme from balance.txt.
+
+    Net demand (required), losses, pumping and the sum of the "EXP." export lines.
+    The SIN block ends at the first region header.
+    """
     m = _DEL_DIA_RE.search(text)
     if m is None:
         raise ValueError("balance.txt: target day header not found")
     target = dt.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
     in_sin = False
+    net: tuple[float, ...] | None = None
+    parts: dict[str, tuple[float, ...] | None] = {}
+    exports = [0.0] * N_HOURS
     for line in text.splitlines():
         if line.strip() == "SIN":
             in_sin = True
             continue
-        if in_sin and line.startswith("DEMANDA NETA"):
-            values = [float(x) for x in line[len("DEMANDA NETA") :].split()]
-            if len(values) != N_HOURS + 1:
-                raise ValueError(f"balance.txt: expected 25 values, got {len(values)}")
-            hourly, total = tuple(values[:N_HOURS]), values[N_HOURS]
-            if (
-                abs(sum(hourly) - total) > N_HOURS / 2
-            ):  # 24 integers rounded: |error| ≤ 12
-                raise ValueError(
-                    "balance.txt: hourly values do not add up to the daily total"
-                )
-            return ProgrammeDay(target_date=target, hourly=hourly, source="txt")
-    raise ValueError("balance.txt: SIN DEMANDA NETA line not found")
+        if not in_sin:
+            continue
+        if line.strip() in _REGION_HEADERS:
+            break
+        if line.startswith("DEMANDA NETA"):
+            net = tuple(float(x) for x in line[len("DEMANDA NETA") :].split())
+            if len(net) != N_HOURS + 1:
+                raise ValueError(f"balance.txt: expected 25 values, got {len(net)}")
+        elif line.startswith("DEMANDA BOMBEO"):
+            parts["pumping"] = _hours_and_total(line)
+        elif line.startswith("PERDIDAS"):
+            parts["losses"] = _hours_and_total(line)
+        elif line.startswith("EXP."):
+            values = _hours_and_total(line)
+            if values is None:
+                raise ValueError(f"balance.txt: unreadable export line {line[:20]!r}")
+            exports = [e + v for e, v in zip(exports, values[:N_HOURS], strict=True)]
+    if net is None:
+        raise ValueError("balance.txt: SIN DEMANDA NETA line not found")
+    hourly, total = net[:N_HOURS], net[N_HOURS]
+    losses = parts.get("losses")
+    # No pumping line means no pumping programmed; an unreadable line means unknown.
+    pumping = parts["pumping"] if "pumping" in parts else (0.0,) * (N_HOURS + 1)
+    return ProgrammeDay(
+        target_date=target,
+        hourly=hourly,
+        source="txt",
+        total_mismatch_mwh=total - sum(hourly),
+        losses=None if losses is None else losses[:N_HOURS],
+        pumping=None if pumping is None else pumping[:N_HOURS],
+        exports=tuple(exports),
+    )
 
 
 def parse_programme_csv(text: str, target_date: dt.date) -> ProgrammeDay:
@@ -156,13 +222,28 @@ def parse_programme_csv(text: str, target_date: dt.date) -> ProgrammeDay:
     Sum of the regional 'Demanda Neta' rows.
     """
     reader = csv.DictReader(io.StringIO(text.lstrip("﻿")))
-    totals = [0.0] * N_HOURS
+    sums = {
+        name: [0.0] * N_HOURS
+        for name in ("demanda neta", "perdidas", "bombeo", "exportacion")
+    }
     n_regions = 0
-    for row in reader:
-        if row["TIPO"] == "D" and row["VARIABLE"] == "Demanda Neta":
+    for raw in reader:
+        # Some files use lower-case headers; compare keys and labels case-insensitively.
+        row = {k.strip().upper(): (v or "").strip() for k, v in raw.items() if k}
+        variable = row.get("VARIABLE", "").lower()
+        if row.get("TIPO", "").upper() == "D" and variable in sums:
+            target = sums[variable]
             for k in range(N_HOURS):
-                totals[k] += float(row[f"H{k + 1:02d}"])
-            n_regions += 1
+                target[k] += float(row[f"H{k + 1:02d}"])
+            n_regions += variable == "demanda neta"
     if n_regions == 0:
         raise ValueError("BALANCE.csv: no 'Demanda Neta' rows")
-    return ProgrammeDay(target_date=target_date, hourly=tuple(totals), source="csv")
+    # Absent rows mean zero (e.g. no pumping or no exports programmed that day).
+    return ProgrammeDay(
+        target_date=target_date,
+        hourly=tuple(sums["demanda neta"]),
+        source="csv",
+        losses=tuple(sums["perdidas"]),
+        pumping=tuple(sums["bombeo"]),
+        exports=tuple(sums["exportacion"]),
+    )

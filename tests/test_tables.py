@@ -68,3 +68,29 @@ def test_build_programme_reads_txt(tmp_path: Path) -> None:
     assert row["target_date"] == dt.date(2010, 1, 6)
     assert row["source"] == "txt"
     assert row["energy_mwh"] == 15000 * 24
+
+
+def test_corrupt_member_is_skipped_not_fatal(tmp_path: Path) -> None:
+    text = _balance_txt([15000] * 24)
+    _archive(
+        tmp_path,
+        "PROGRAMACION_DIARIA",
+        "2010-01-05",
+        "ID9",
+        "PD100106.zip",
+        {"balance.txt": text},
+    )
+    _archive(
+        tmp_path,
+        "PROGRAMACION_DIARIA",
+        "2010-01-06",
+        "ID8",
+        "PD100107.zip",
+        {"balance.txt": text},
+    )
+    bad = tmp_path / "docs" / "PROGRAMACION_DIARIA" / "2010-01-05" / "ID9_PD100106.zip"
+    raw = bad.read_bytes()
+    # local header name differs from the central directory (seen in CAMMESA archives)
+    bad.write_bytes(raw.replace(b"balance.txt", b"PO240317.ht", 1))
+    df = build_programme(tmp_path)
+    assert list(df["doc_id"]) == ["ID8"]

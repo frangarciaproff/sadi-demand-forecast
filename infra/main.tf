@@ -120,7 +120,7 @@ resource "aws_lambda_function" "collector" {
   handler          = "handler.handler"
   architectures    = ["arm64"]
   memory_size      = 256 # 128 MB run peaked at 100 MB (boto3 import)
-  timeout          = 900 # docs mode worst case: 3 listings x (3 x 120 s + backoff)
+  timeout          = 900 # docs mode: ~20 listings + new zips; an interrupted run resumes the next day
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
 

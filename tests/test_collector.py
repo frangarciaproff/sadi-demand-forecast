@@ -130,3 +130,66 @@ def _s3_init(fake: FakeS3) -> Callable[..., None]:
         self.prefix = prefix
 
     return init
+
+
+def test_failures_are_summarised(
+    cc: ModuleType, sink: collect_cammesa.LocalSink
+) -> None:
+    cc.FAILURES.clear()
+    assert not cc.run_snapshot(sink, [1002, 999])
+    assert cc.report_failures() == 1
+    assert "snapshot 999" in cc.FAILURES[0]
+
+
+def test_dropped_connection_is_retried_not_fatal(
+    cc: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import http.client
+
+    def drop(*_args: object, **_kwargs: object) -> None:
+        raise http.client.RemoteDisconnected("closed")
+
+    monkeypatch.setattr(cc.urllib.request, "urlopen", drop)
+    monkeypatch.setattr(cc, "RETRIES", 2)
+    with pytest.raises(RuntimeError, match="failed after 2 attempts"):
+        cc.fetch("http://example.invalid/x")
+
+
+def test_verify_reports_listed_but_missing_attachments(
+    cc: ModuleType, sink: collect_cammesa.LocalSink
+) -> None:
+    cc.run_docs(
+        sink,
+        "PARTE_SEMANAL_UNIF",
+        dt.date(2019, 1, 1),
+        dt.date(2019, 1, 10),
+        force=False,
+    )
+    assert cc.verify_docs(sink) == [
+        "docs/PARTE_SEMANAL_UNIF/2019-01-02/ID2019-01-01_BAD.zip"
+    ]  # the invalid download was stored as *.error, so the real file is still missing
+
+
+def test_verify_ignores_documents_before_archive_start(
+    cc: ModuleType, sink: collect_cammesa.LocalSink
+) -> None:
+    span = (dt.date(2019, 1, 1), dt.date(2019, 1, 10))
+    cc.run_docs(sink, "PARTE_SEMANAL_UNIF", *span, force=False)
+    assert cc.verify_docs(sink, since=dt.date(2019, 1, 3)) == []
+
+
+def test_post_operativo_attachments_use_the_publication_nemo(
+    cc: ModuleType, sink: collect_cammesa.LocalSink
+) -> None:
+    cc.run_docs(
+        sink,
+        "PARTE_POST_OPERATIVO_UNIF",
+        dt.date(2019, 1, 1),
+        dt.date(2019, 1, 3),
+        force=False,
+    )
+    atts = [r for r in FakeCammesa.requests if "findAttachmentByNemoId" in r]
+    assert atts
+    assert all("nemo=PARTE_POST_OPERATIVO_COMP" in r for r in atts)
+    listings = [r for r in FakeCammesa.requests if "findDocumentosByNemoRango" in r]
+    assert all("nemo=PARTE_POST_OPERATIVO_UNIF" in r for r in listings)

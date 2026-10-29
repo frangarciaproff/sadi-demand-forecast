@@ -9,7 +9,12 @@ Modes:
     backfill  by-date endpoint for a date range (resumable, local only)
     regions   region list
     docs      CAMMESA published documents for a date range (resumable, local only):
-              programacion = Programación Diaria, semanal = Parte Semanal
+              programacion = Programación Diaria, semanal = Parte Semanal,
+              postoperativo = Parte Post Operativo (daily report and its
+              complement, published ~1 month later)
+    verify    check that every attachment in the archived listings exists on disk
+
+Every run ends with a summary of failed downloads (also in logs/collector.log).
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import http.client
 import json
 import logging
 import re
@@ -33,11 +39,23 @@ RAW_DIR = ROOT / "data" / "raw" / "cammesa"
 LOG_DIR = ROOT / "logs"
 BASE_URL = "https://api.cammesa.com/demanda-svc/demanda/"
 PUB_URL = "https://api.cammesa.com/pub-svc/public/"
-DOC_NEMOS = {"programacion": "PROGRAMACION_DIARIA", "semanal": "PARTE_SEMANAL_UNIF"}
+DOC_NEMOS = {
+    "programacion": "PROGRAMACION_DIARIA",
+    "semanal": "PARTE_SEMANAL_UNIF",
+    "postoperativo": "PARTE_POST_OPERATIVO_UNIF",
+}
+# Listings of these nemos mix several publications (daily report and complement);
+# attachments must be requested with the publication's own nemo.
+USE_DOC_NEMO = {"PARTE_POST_OPERATIVO_UNIF"}
+# Daily job look-back per nemo (complements appear ~1 month after the day).
+RECENT_DAYS = {"PARTE_POST_OPERATIVO_UNIF": 45}
 DOCS_TIMEOUT_S = 120
+# Start of the document archive; older documents in listings are ignored by verify.
+DOCS_ARCHIVE_START = dt.date(2010, 1, 1)
 DOC_WINDOW_DAYS = {
     "PROGRAMACION_DIARIA": 4,
     "PARTE_SEMANAL_UNIF": 28,
+    "PARTE_POST_OPERATIVO_UNIF": 4,
 }  # API: daily nemos accept < 5 days
 ART = dt.timezone(dt.timedelta(hours=-3))  # Argentina, no DST
 DEFAULT_REGIONS = [1002, 1945]  # SADI total, Córdoba
@@ -47,6 +65,9 @@ BACKFILL_PAUSE_S = 1.0
 USER_AGENT = "sadi-demand-forecast/0.1 (research archive; low-rate)"
 
 log = logging.getLogger("collector")
+
+# Failures of the current run, reported at the end (cleared per Lambda invocation).
+FAILURES: list[str] = []
 
 
 class Sink(Protocol):
@@ -131,7 +152,12 @@ def fetch(url: str, timeout: float = TIMEOUT_S) -> tuple[int, bytes]:
             if exc.code < 500:
                 return exc.code, exc.read()
             last_exc = exc
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,  # e.g. IncompleteRead, RemoteDisconnected
+        ) as exc:
             last_exc = exc
         wait = 2**attempt
         log.warning(
@@ -149,6 +175,23 @@ def count_points(body: bytes) -> int | None:
     return len(data) if isinstance(data, list) else None
 
 
+def fail(message: str) -> None:
+    """Log a failure and keep it for the end-of-run summary."""
+    FAILURES.append(message)
+    log.error("%s", message)
+
+
+def report_failures() -> int:
+    """Log the end-of-run summary; returns the number of failures."""
+    if FAILURES:
+        log.error("RUN SUMMARY: %d failure(s)", len(FAILURES))
+        for message in FAILURES:
+            log.error("  - %s", message)
+    else:
+        log.info("RUN SUMMARY: no failures")
+    return len(FAILURES)
+
+
 def archive(sink: Sink, kind: str, region: str, day: dt.date | None, url: str) -> bool:
     """Fetch url and store the raw body. Returns True on success."""
     retrieved = utc_stamp()
@@ -163,7 +206,7 @@ def archive(sink: Sink, kind: str, region: str, day: dt.date | None, url: str) -
     try:
         status, body = fetch(url)
     except RuntimeError as exc:
-        log.error("%s", exc)
+        fail(f"{kind} {region} {day_part}: {exc}")
         sink.record({**base, "status": None, "error": str(exc)})
         return False
 
@@ -181,9 +224,7 @@ def archive(sink: Sink, kind: str, region: str, day: dt.date | None, url: str) -
             "file": location,
         }
     )
-    level = logging.INFO if ok else logging.ERROR
-    log.log(
-        level,
+    log.info(
         "%s region=%s date=%s status=%s points=%s",
         kind,
         region,
@@ -191,6 +232,8 @@ def archive(sink: Sink, kind: str, region: str, day: dt.date | None, url: str) -
         status,
         n_points,
     )
+    if not ok:
+        fail(f"{kind} {region} {day_part}: HTTP {status}, points={n_points}")
     return ok
 
 
@@ -276,9 +319,9 @@ def cached_listing(sink: LocalSink, nemo: str, w0: dt.date) -> bytes | None:
 def run_docs(sink: Sink, nemo: str, start: dt.date, end: dt.date, force: bool) -> bool:
     """Archive every attachment of publication `nemo` published in [start, end]."""
     ok = True
-    stable_before = today_art() - dt.timedelta(
-        days=7
-    )  # older listings are reused on resume
+    # Older listings are reused on resume; later re-publications (e.g. complements)
+    # can still appear within RECENT_DAYS.
+    stable_before = today_art() - dt.timedelta(days=max(7, RECENT_DAYS.get(nemo, 0)))
     for w0, w1 in windows(start, end, DOC_WINDOW_DAYS[nemo]):
         body: bytes | None = None
         if isinstance(sink, LocalSink) and not force and w1 <= stable_before:
@@ -303,7 +346,7 @@ def run_docs(sink: Sink, nemo: str, start: dt.date, end: dt.date, force: bool) -
             try:
                 status, body = fetch(list_url, timeout=DOCS_TIMEOUT_S)
             except RuntimeError as exc:
-                log.error("%s", exc)
+                fail(f"docs_index {nemo} window {w0}: {exc}")
                 sink.record({**base, "status": None, "error": str(exc)})
                 ok = False
                 continue
@@ -333,6 +376,7 @@ def run_docs(sink: Sink, nemo: str, start: dt.date, end: dt.date, force: bool) -
             )
             time.sleep(BACKFILL_PAUSE_S)
             if not listed:
+                fail(f"docs_index {nemo} window {w0}: HTTP {status}, not a list")
                 ok = False
                 continue
         for doc in json.loads(body):
@@ -344,8 +388,13 @@ def run_docs(sink: Sink, nemo: str, start: dt.date, end: dt.date, force: bool) -
                 fname = f"{safe_name(doc['id'])}_{safe_name(att['nombre'])}"
                 if not force and sink.exists(f"{key_dir}/{fname}"):
                     continue
+                att_nemo = doc.get("nemo") if nemo in USE_DOC_NEMO else None
                 q = urllib.parse.urlencode(
-                    {"attachmentId": att["id"], "docId": doc["id"], "nemo": nemo}
+                    {
+                        "attachmentId": att["id"],
+                        "docId": doc["id"],
+                        "nemo": att_nemo or nemo,
+                    }
                 )
                 url = f"{PUB_URL}findAttachmentByNemoId?{q}"
                 rec = {
@@ -356,13 +405,14 @@ def run_docs(sink: Sink, nemo: str, start: dt.date, end: dt.date, force: bool) -
                     "url": url,
                     "doc_id": doc["id"],
                     "doc_version": doc.get("version"),
+                    "doc_nemo": doc.get("nemo"),
                     "doc_hora": doc.get("hora"),
                     "attachment": att["nombre"],
                 }
                 try:
                     status, blob = fetch(url, timeout=DOCS_TIMEOUT_S)
                 except RuntimeError as exc:
-                    log.error("%s", exc)
+                    fail(f"doc {nemo} {day} {att['nombre']}: {exc}")
                     sink.record({**rec, "status": None, "error": str(exc)})
                     ok = False
                     continue
@@ -390,16 +440,48 @@ def run_docs(sink: Sink, nemo: str, start: dt.date, end: dt.date, force: bool) -
                     status,
                     len(blob),
                 )
+                if not good:
+                    fail(
+                        f"doc {nemo} {day} {att['nombre']}: HTTP {status}, invalid body"
+                    )
                 ok &= good
                 time.sleep(BACKFILL_PAUSE_S)
     return ok
+
+
+def verify_docs(sink: LocalSink, since: dt.date = DOCS_ARCHIVE_START) -> list[str]:
+    """Attachments dated >= `since` in archived listings but absent on disk."""
+    missing: list[str] = []
+    for nemo in DOC_NEMOS.values():
+        seen: set[str] = set()
+        for path in sorted((sink.raw_dir / "docs_index" / nemo).rglob("*.json")):
+            if path.name.endswith(".error.json"):
+                continue
+            for doc in json.loads(path.read_bytes()):
+                date = dt.datetime.strptime(doc["fecha"], "%d/%m/%Y").date()
+                if date < since:
+                    continue
+                day = date.isoformat()
+                for att in doc.get("adjuntos") or []:
+                    name = f"{safe_name(doc['id'])}_{safe_name(att['nombre'])}"
+                    key = f"docs/{nemo}/{day}/{name}"
+                    if key not in seen and not sink.exists(key):
+                        missing.append(key)
+                    seen.add(key)
+    return missing
 
 
 def run_docs_recent(sink: Sink, days: int) -> bool:
     """All publications, last `days` days (daily job; catches late re-publications)."""
     today = today_art()
     results = [
-        run_docs(sink, nemo, today - dt.timedelta(days=days), today, False)
+        run_docs(
+            sink,
+            nemo,
+            today - dt.timedelta(days=max(days, RECENT_DAYS.get(nemo, 0))),
+            today,
+            False,
+        )
         for nemo in DOC_NEMOS.values()
     ]
     return all(results)
@@ -432,7 +514,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("mode", choices=["snapshot", "day", "backfill", "regions", "docs"])
+    p.add_argument(
+        "mode", choices=["snapshot", "day", "backfill", "regions", "docs", "verify"]
+    )
     p.add_argument("--doc", choices=sorted(DOC_NEMOS), help="docs: which publication")
     p.add_argument("--regions", type=int, nargs="+", default=DEFAULT_REGIONS)
     p.add_argument(
@@ -451,18 +535,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
-    setup_logging()
-    sink = LocalSink()
+def _run(args: argparse.Namespace, sink: LocalSink) -> int:
+    if args.mode == "verify":
+        missing = verify_docs(sink)
+        for key in missing:
+            fail(f"missing on disk: {key}")
+        log.info("verify: %d attachment(s) missing", len(missing))
+        return 1 if missing else 0
     if args.mode == "docs":
         if args.doc is None or args.start is None:
             log.error("docs requires --doc and --start")
             return 2
         end = args.end or today_art()
-        return (
-            0 if run_docs(sink, DOC_NEMOS[args.doc], args.start, end, args.force) else 1
-        )
+        ok = run_docs(sink, DOC_NEMOS[args.doc], args.start, end, args.force)
+        return 0 if ok else 1
     if args.mode != "backfill":
         return 0 if run_mode(sink, args.mode, args.regions) else 1
     if args.start is None:
@@ -470,6 +556,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     end = args.end or today_art() - dt.timedelta(days=1)
     return 0 if run_backfill(sink, args.regions, args.start, end, args.force) else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    setup_logging()
+    FAILURES.clear()
+    code = _run(args, LocalSink())
+    report_failures()
+    return code
 
 
 if __name__ == "__main__":
