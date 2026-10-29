@@ -74,3 +74,15 @@ def test_shares_from_model_renormalise() -> None:
     )
     s = shares_from_model(x, np.linspace(-0.1, 0.1, 24))
     assert abs(s.sum(axis=1).iloc[0] - 1) < 1e-12
+
+
+def test_align_programme_uses_previous_day_for_hour_1() -> None:
+    from sadi_forecast.hourly import T_COLS, align_programme
+
+    d1, d2 = dt.date(2026, 10, 1), dt.date(2026, 10, 2)
+    prog = pd.DataFrame(
+        [list(range(1, 25)), list(range(101, 125))], index=[d1, d2], columns=T_COLS
+    )
+    a = align_programme(prog).to_numpy()
+    assert a[0, 0] == 1.0 and a[0, 1] == 1.5
+    assert a[1, 0] == (24 + 101) / 2 and a[1, 23] == 123.5

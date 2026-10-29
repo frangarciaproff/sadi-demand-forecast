@@ -27,12 +27,31 @@ from sadi_forecast.features import (
     valid_versions,
     weather_daily,
 )
+from sadi_forecast.hourly import (
+    HOURS,
+    S_COLS,
+    X_COLS,
+    align_programme,
+    definitive_hourly,
+)
+from sadi_forecast.hourly import programme_hourly as programme_hourly_table
 from sadi_forecast.live_features import GFS_COLUMN, features_for
 from sadi_forecast.openmeteo import LIVE_VARS, http_get, live_url
 from sadi_forecast.points import POINTS
 from sadi_forecast.postop import NEMO as POSTOP_NEMO
 from sadi_forecast.postop import build_postop
 from sadi_forecast.production import forecast_day, load, save, train
+from sadi_forecast.production_hourly import (
+    SHAPE_FILE,
+    SHAPE_META_FILE,
+    design_for_day,
+    forecast_hourly,
+    load_shape,
+    merge_hourly_weather,
+    programme_curve,
+    save_shape,
+    train_shape,
+)
 from sadi_forecast.sintesis import build_supply
 from sadi_forecast.sintesis_web import BASES, SITE, YEAR_PAGE, find_bases
 from sadi_forecast.store import Store, read_parquet, write_parquet
@@ -48,6 +67,7 @@ STATE = {
     "d8": "state/d8_postop_versions.parquet",
     "d7": "state/d7_supply_hourly.parquet",
     "gfs": "state/gfs_daily.parquet",
+    "gfs_hourly": "state/gfs_hourly.parquet",
     "features": "state/features_daily.parquet",
 }
 CHAMPION = "models/champion.json"
@@ -159,7 +179,43 @@ def update_weather(store: Store, issue_date: dt.date, fetch: Fetch) -> int:
     # hours whose 48-h run did not exist yet when it ran.
     merged = new.combine_first(old)
     write_parquet(store, STATE["gfs"], merged)
+    # Only the hourly curve needs gfs_hourly: a failure here must not stop the daily
+    # forecast (audit 2026-10-29, v2).
+    try:
+        old_h = (
+            read_parquet(store, STATE["gfs_hourly"])
+            if store.exists(STATE["gfs_hourly"])
+            else pd.DataFrame()
+        )
+        hourly = pd.concat(frames, ignore_index=True)
+        write_parquet(store, STATE["gfs_hourly"], merge_hourly_weather(hourly, old_h))
+    except Exception:
+        log.exception("gfs_hourly not updated")
     return len(merged) - len(old)
+
+
+def issue_fetch_missing_hours(
+    store: Store, day: dt.date, weights: pd.Series
+) -> int | None:
+    """Hours of `day` (ART) for which a point with positive weight has no value in the
+    fetch saved at the issue date (day - 1); None if that fetch is not stored.
+
+    The state tables fill such holes from older fetches, which may hold values of a
+    different lead time (audit 2026-10-29, v2): the forecast record carries this count.
+    """
+    issue = (day - dt.timedelta(days=1)).isoformat()
+    hours = pd.date_range(dt.datetime.combine(day, dt.time()), periods=24, freq="h")
+    missing: set[pd.Timestamp] = set()
+    for pt in POINTS:
+        if weights.get(pt.key, 0.0) <= 0:
+            continue
+        key = f"raw/open_meteo/gfs_live/{pt.key}/{issue}.json"
+        if not store.exists(key):
+            return None
+        f = response_frame(json.loads(store.read(key)), pt.key)
+        have = set(f.loc[f[GFS_COLUMN].notna(), "time_art"])
+        missing.update(h for h in hours if h not in have)
+    return len(missing)
 
 
 # --- daily --------------------------------------------------------------------------
@@ -170,9 +226,16 @@ def _tables(store: Store) -> dict[str, Any]:
     return {
         "postop": _dates(read_parquet(store, STATE["d8"])),
         "supply": _dates(read_parquet(store, STATE["d7"])),
+        "d6": d6,
         "b1": b1_daily(d6),
         "gfs": read_parquet(store, STATE["gfs"]),
     }
+
+
+def _gfs_hourly(store: Store) -> pd.DataFrame:
+    if not store.exists(STATE["gfs_hourly"]):
+        raise FileNotFoundError(f"{STATE['gfs_hourly']} missing")
+    return read_parquet(store, STATE["gfs_hourly"])
 
 
 def _weights() -> pd.Series:
@@ -191,6 +254,50 @@ def _load_champion(store: Store, tmp: Path) -> tuple[Any, Any]:
     return load(folder)
 
 
+def _load_champion_shape(store: Store, tmp: Path) -> tuple[Any, Any] | None:
+    """The champion's shape model, or None if that version has none."""
+    version = json.loads(store.read(CHAMPION))["version"]
+    names = (SHAPE_FILE, SHAPE_META_FILE)
+    if not all(store.exists(f"models/{version}/{n}") for n in names):
+        return None
+    folder = tmp / f"{version}_shape"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (folder / name).write_bytes(store.read(f"models/{version}/{name}"))
+    return load_shape(folder)
+
+
+def _hourly_record(
+    store: Store,
+    t: dict[str, Any],
+    features: pd.DataFrame,
+    day: dt.date,
+    mwh: float,
+    missing_hours: int | None,
+) -> dict[str, object]:
+    """Hourly curve of `day`, or why it is missing. Any failure is caught: the daily
+    forecast is already stored (audit 2026-10-29, v2)."""
+    try:
+        if missing_hours is None:
+            return {"hourly_error": "no weather fetch stored at the issue date"}
+        if missing_hours > 0:
+            return {
+                "hourly_error": f"{missing_hours} hours of the target day missing "
+                "in the issue-time weather fetch"
+            }
+        with tempfile.TemporaryDirectory() as tmp:
+            shape = _load_champion_shape(store, Path(tmp))
+        if shape is None:
+            return {"hourly_error": "no shape model for the champion version"}
+        x = design_for_day(
+            features, t["postop"], t["d6"], _gfs_hourly(store), _weights(), day
+        )
+        return forecast_hourly(shape[0], shape[1], x, mwh)
+    except Exception as exc:
+        log.exception("no hourly curve for %s", day)
+        return {"hourly_error": f"{type(exc).__name__}: {exc}"}
+
+
 def forecast(store: Store, day: dt.date, run_at: dt.datetime) -> dict[str, object]:
     """Forecast `day` once; an existing forecast is returned unchanged."""
     key = f"forecasts/{day.isoformat()}.json"
@@ -205,14 +312,25 @@ def forecast(store: Store, day: dt.date, run_at: dt.datetime) -> dict[str, objec
         model, meta = _load_champion(store, Path(tmp))
     rec = forecast_day(model, meta, features, day)
     issue = issue_time(day)
+    missing: int | None = None
+    try:
+        missing = issue_fetch_missing_hours(store, day, _weights())
+    except Exception:
+        log.exception("issue-time weather fetch not readable")
     rec.update(
         {
             "issue_time_art": issue.isoformat(),
             "run_at_art": run_at.isoformat(timespec="seconds"),
             "late": run_at > issue,
             "weather": "live",
+            "issue_fetch_missing_hours": missing,
         }
     )
+    # The daily forecast is stored before the hourly curve is attempted.
+    store.write(key, _json(rec))
+    daily_mwh = rec["forecast_mwh"]
+    assert isinstance(daily_mwh, float)
+    rec.update(_hourly_record(store, t, features, day, daily_mwh, missing))
     store.write(key, _json(rec))
     return rec
 
@@ -236,6 +354,76 @@ def provisional_actuals(versions: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _curve_errors(
+    pred: list[float] | None, actual: list[float] | None
+) -> dict[str, float | int | None]:
+    """Hourly MAPE, daily peak error (%) and peak-hour error (h) of one curve."""
+    names = ("hourly_mape_pct", "peak_error_pct", "peak_hour_error_h")
+    if (
+        not pred
+        or not actual
+        or len(pred) != 24
+        or len(actual) != 24
+        or any(pd.isna(v) for v in [*pred, *actual])
+        or min(actual) <= 0
+    ):
+        return dict.fromkeys(names)
+    e = [abs(100 * (p / a - 1)) for p, a in zip(pred, actual, strict=True)]
+    return {
+        "hourly_mape_pct": round(sum(e) / 24, 3),
+        "peak_error_pct": round(100 * (max(pred) / max(actual) - 1), 3),
+        "peak_hour_error_h": abs(pred.index(max(pred)) - actual.index(max(actual))),
+    }
+
+
+def _hourly_actuals(
+    t: dict[str, Any], latest: pd.DataFrame
+) -> tuple[dict[dt.date, list[float]], dict[dt.date, list[float]]]:
+    """Provisional (latest valid version - programmed exports) and definitive (D7)
+    hourly actuals per day."""
+    prog = programme_hourly_table(t["d6"])
+    exports = prog.reindex(latest.index)[X_COLS].fillna(0.0).to_numpy()
+    prov_h = latest[S_COLS].to_numpy(dtype=float) - exports
+    prov = {
+        d: [float(v) for v in row] for d, row in zip(latest.index, prov_h, strict=True)
+    }
+    defin_h = definitive_hourly(t["supply"])
+    defin = {d: [float(v) for v in defin_h.loc[d, HOURS]] for d in defin_h.index}
+    return prov, defin
+
+
+def _aligned_curve(aligned: pd.DataFrame | None, day: dt.date) -> list[float] | None:
+    if aligned is None or day not in aligned.index or aligned.loc[day].isna().any():
+        return None
+    return [round(float(v), 1) for v in aligned.loc[day, HOURS].to_numpy(dtype=float)]
+
+
+def _hourly_scores(
+    curve: list[float],
+    prog: pd.DataFrame,
+    aligned: pd.DataFrame | None,
+    day: dt.date,
+    prov_hourly: dict[dt.date, list[float]],
+    defin_hourly: dict[dt.date, list[float]],
+) -> dict[str, Any]:
+    """Hourly scores of the model and of the operator's programme, as published (the
+    pre-registered benchmark) and aligned to D7's hours (b1_aligned)."""
+    out: dict[str, Any] = {}
+    b1_curve = programme_curve(prog, day)
+    b1_aligned = _aligned_curve(aligned, day)
+    for actual, table in (("provisional", prov_hourly), ("definitive", defin_hourly)):
+        a_curve = table.get(day)
+        out[f"{actual}_peak_mw"] = round(max(a_curve), 1) if a_curve else None
+        for name, pred in (
+            ("forecast", curve),
+            ("b1", b1_curve),
+            ("b1_aligned", b1_aligned),
+        ):
+            for k, v in _curve_errors(pred, a_curve).items():
+                out[f"{name}_{k}_{actual}"] = v
+    return out
+
+
 def score(store: Store) -> int:
     """Score every forecast whose actuals exist (provisional, then definitive)."""
     days = [
@@ -255,6 +443,17 @@ def score(store: Store) -> int:
     )
     prov_value = dict(zip(latest.index, latest["value_mwh"].astype(float), strict=True))
     prov_kind = dict(zip(latest.index, latest["kind"].astype(str), strict=True))
+    # Hourly scores are optional: a failure leaves the daily scores intact.
+    prov_hourly: dict[dt.date, list[float]] = {}
+    defin_hourly: dict[dt.date, list[float]] = {}
+    prog: pd.DataFrame | None = None
+    aligned: pd.DataFrame | None = None
+    try:
+        prov_hourly, defin_hourly = _hourly_actuals(t, latest)
+        prog = programme_hourly_table(t["d6"])
+        aligned = align_programme(prog)
+    except Exception:
+        log.exception("hourly actuals not built; hourly scores skipped")
     n = 0
     for day in days:
         key = f"scores/{day.isoformat()}.json"
@@ -279,6 +478,14 @@ def score(store: Store) -> int:
             a = rec[f"{actual}_mwh"]
             for name in ("forecast", "b0", "b1"):
                 rec[f"{name}_error_pct_{actual}"] = _pct(rec[f"{name}_mwh"], a)
+        curve = fc.get("hourly_mwh")
+        if curve and prog is not None:
+            try:
+                rec.update(
+                    _hourly_scores(curve, prog, aligned, day, prov_hourly, defin_hourly)
+                )
+            except Exception:
+                log.exception("hourly scores of %s skipped", day)
         if rec != old:
             store.write(key, _json(rec))
             n += 1
@@ -300,11 +507,14 @@ def site_data(store: Store, now: dt.datetime) -> dict[str, Any]:
     Only daily totals and errors (derived results); no raw document is published.
     """
     rows: dict[str, dict[str, Any]] = {}
+    curves: dict[str, list[float]] = {}
     for key in store.list("forecasts/"):
         name = key.rsplit("/", 1)[1]
         if not name.endswith(".json") or "_rerun_" in name:
             continue
         fc = json.loads(store.read(key))
+        if fc.get("hourly_mwh"):
+            curves[fc["target_date"]] = fc["hourly_mwh"]
         rows[fc["target_date"]] = {
             "date": fc["target_date"],
             "forecast_mwh": fc["forecast_mwh"],
@@ -314,8 +524,14 @@ def site_data(store: Store, now: dt.datetime) -> dict[str, Any]:
         }
     # The operator's programme for a day is published about 21:30 the evening before,
     # so it is shown as soon as the state has it, before the day is scored.
+    prog = None
     if rows and store.exists(STATE["d6"]):
-        b1 = b1_daily(read_parquet(store, STATE["d6"])).dropna(subset=["b1_total_mwh"])
+        d6 = read_parquet(store, STATE["d6"])
+        try:
+            prog = programme_hourly_table(d6)
+        except Exception:
+            log.exception("hourly programme not read; page shows no operator curve")
+        b1 = b1_daily(d6).dropna(subset=["b1_total_mwh"])
         programme = dict(
             zip(
                 (d.isoformat() for d in b1["target_date"]),
@@ -339,6 +555,11 @@ def site_data(store: Store, now: dt.datetime) -> dict[str, Any]:
                 "b1_error_pct_definitive",
                 "b0_error_pct_provisional",
                 "b0_error_pct_definitive",
+                *(
+                    f"{who}_hourly_mape_pct_{kind}"
+                    for who in ("forecast", "b1", "b1_aligned")
+                    for kind in ("provisional", "definitive")
+                ),
             ):
                 row[k] = sc.get(k)
     days = sorted(rows)[-SITE_DAYS:]
@@ -372,6 +593,7 @@ def site_data(store: Store, now: dt.datetime) -> dict[str, Any]:
         "mape_b1_pct": _mape([r.get(f"b1_error_pct_{k}") for k, r in best]),
         "mape_b0_pct": _mape([r.get(f"b0_error_pct_{k}") for k, r in best]),
     }
+    summary["hourly"], curve = _site_hourly(recent, curves, prog)
     champion = (
         json.loads(store.read(CHAMPION))["version"] if store.exists(CHAMPION) else None
     )
@@ -380,7 +602,61 @@ def site_data(store: Store, now: dt.datetime) -> dict[str, Any]:
         "model_version": champion,
         "days": recent,
         "summary": summary,
+        "curve": curve,
     }
+
+
+def _site_hourly(
+    recent: list[dict[str, Any]],
+    curves: dict[str, list[float]],
+    prog: pd.DataFrame | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Hourly summary and tomorrow's curve; empty if anything fails (the daily page
+    data is published anyway)."""
+    empty = {"days": 0, "mape_model_pct": None, "mape_b1_pct": None}
+    try:
+        return _site_hourly_parts(recent, curves, prog)
+    except Exception:
+        log.exception("hourly page data skipped")
+        return empty, None
+
+
+def _site_hourly_parts(
+    recent: list[dict[str, Any]],
+    curves: dict[str, list[float]],
+    prog: pd.DataFrame | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    hourly = []
+    for r in recent:
+        for kind in ("definitive", "provisional"):
+            m = r.get(f"forecast_hourly_mape_pct_{kind}")
+            b = r.get(f"b1_aligned_hourly_mape_pct_{kind}")
+            if m is not None and b is not None:
+                hourly.append((m, b))
+                break
+    summary_hourly = {
+        "days": len(hourly),
+        "mape_model_pct": _mape([m for m, _ in hourly]),
+        "mape_b1_pct": _mape([b for _, b in hourly]),
+    }
+    curve = None
+    if curves:
+        day_iso = max(curves)
+        values = curves[day_iso]
+        day = dt.date.fromisoformat(day_iso)
+        b1_curve = programme_curve(prog, day) if prog is not None else None
+        b1_aligned = (
+            _aligned_curve(align_programme(prog), day) if prog is not None else None
+        )
+        curve = {
+            "date": day_iso,
+            "forecast_mwh": values,
+            "b1_mwh": b1_curve,
+            "b1_aligned_mwh": b1_aligned,
+            "peak_mw": max(values),
+            "peak_hour": values.index(max(values)) + 1,
+        }
+    return summary_hourly, curve
 
 
 def publish_site(store: Store, site: Store, now: dt.datetime) -> int:
@@ -475,6 +751,13 @@ def monthly(
         folder = save(model, meta, Path(t))
         for name in ("model.joblib", "meta.json"):
             store.write(f"models/{meta.version}/{name}", (folder / name).read_bytes())
+    # A failed shape model leaves the new version without an hourly curve; the daily
+    # model is still promoted.
+    try:
+        out["shape_model"] = _train_and_store_shape(store, table, t_, today)
+    except Exception as exc:
+        log.exception("shape model not trained")
+        out["shape_model_error"] = f"{type(exc).__name__}: {exc}"
     store.write(CHAMPION, _json({"version": meta.version}))
     out["model"] = {
         "version": meta.version,
@@ -482,3 +765,29 @@ def monthly(
         "train_last": meta.train_last,
     }
     return out
+
+
+def _train_and_store_shape(
+    store: Store, table: pd.DataFrame, t: dict[str, Any], as_of: dt.date
+) -> dict[str, Any]:
+    model, meta = train_shape(
+        table, t["postop"], t["d6"], t["supply"], _gfs_hourly(store), _weights(), as_of
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        save_shape(model, meta, folder)
+        for name in (SHAPE_FILE, SHAPE_META_FILE):
+            store.write(f"models/{meta.version}/{name}", (folder / name).read_bytes())
+    return {
+        "version": meta.version,
+        "n_days": meta.n_days,
+        "train_last": meta.train_last,
+    }
+
+
+def shape(store: Store) -> dict[str, Any]:
+    """Train the shape model for the current champion version (same as_of date), from
+    the stored feature table; used once to add v2 to a v1 model already trained."""
+    version = dt.date.fromisoformat(json.loads(store.read(CHAMPION))["version"])
+    table = read_parquet(store, STATE["features"])
+    return _train_and_store_shape(store, table, _tables(store), version)

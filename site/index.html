@@ -25,6 +25,20 @@
       <div class="tiles" id="tiles"></div>
     </section>
 
+    <section id="curve-section" hidden>
+      <h2>Hour by hour, <span id="curve-date">…</span></h2>
+      <div class="legend"><span><i class="swatch model"></i>Model forecast</span><span><i class="swatch operator"></i>Operator hourly programme (CAMMESA), same hours</span></div>
+      <div class="chart-wrap">
+        <svg id="curve" role="img" aria-labelledby="curve-title">
+          <title id="curve-title">Hourly supplied energy forecast for tomorrow (average MW in each hour), model and operator programme</title>
+        </svg>
+        <div class="tooltip" id="curve-tooltip" hidden></div>
+      </div>
+      <p class="note" id="curve-note"></p>
+      <p class="note" id="curve-score"></p>
+      <p class="note">Each hour is the energy from the hour before to the hour shown. The operator labels its hours half an hour later, so its programme is shown and scored as the mean of two consecutive published hours.</p>
+    </section>
+
     <section>
       <h2>Last 90 days</h2>
       <div class="legend" id="legend"></div>
@@ -51,6 +65,7 @@
       <ul class="plain">
         <li>Model: a linear response to heating and cooling degree days plus gradient-boosted trees on the rest (calendar, recent days), on the change against the median of the same weekday in the previous four weeks.</li>
         <li>Inputs as known at the issue time: the operator's daily reports already published (three or more days old), the 48-hour-lead GFS temperature forecast at 15 demand centres, and the holiday calendar.</li>
+        <li>Hourly curve: the daily forecast split into 24 hourly shares, from a second tree model on the change in shape against the same weekdays (hour, calendar, hourly forecast temperature). The hours add up to the daily forecast.</li>
         <li>Retrained every month on the values the operator has published by then.</li>
         <li>The operator's programme is published about 11 hours later and uses real-time operating data, so the comparison favours it.</li>
       </ul>
@@ -68,6 +83,7 @@
           </tbody>
         </table>
       </div>
+      <p class="note">Hourly curve, test year<sup>*</sup>: mean absolute percentage error per hour 4.06 % (model) and 3.59 % (operator programme on the same hours); daily peak 3.38 % and 3.17 %. The operator is better on both; the model's peak is unbiased (operator +2 %).</p>
       <p class="note"><sup>*</sup>The test year was first used, once, for a gradient-boosted-trees model (3.41 %). After an external audit, the hybrid model shown here replaced it under a rule written down before the check; its test-year number is therefore not a clean test. The clean evaluation is the live record on this page. The operator's programme overestimates by about 3 % by design.</p>
     </section>
 

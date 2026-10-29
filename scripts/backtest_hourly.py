@@ -90,20 +90,26 @@ def daily_ape(
     return e.mean(axis=1)
 
 
-def main() -> int:
+def hourly_forecasts(
+    start: dt.date, end: dt.date, daily_fc: pd.Series
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dt.date]]:
+    """S1, S0 and B1 hourly forecasts and the definitive hourly actual for start..end.
+
+    Data after `end` is not loaded. Returns (S1, S0, B1, actual, days with S1 and S0).
+    """
     f = pd.read_parquet(INTERIM / "features_daily.parquet")
-    f = f[[d <= VAL_END for d in f.index]]
+    f = f[[d <= end for d in f.index]]
     postop = _dates(pd.read_parquet(INTERIM / "d8_postop_versions.parquet"))
-    postop = postop[[d <= VAL_END for d in postop["date"]]]
+    postop = postop[[d <= end for d in postop["date"]]]
     supply = _dates(pd.read_parquet(INTERIM / "d7_supply_hourly.parquet"))
-    supply = supply[[d <= VAL_END for d in supply["date"]]]
+    supply = supply[[d <= end for d in supply["date"]]]
     programme = pd.read_parquet(INTERIM / "d6_programme_hourly.parquet")
     b1 = b1_daily(programme)
     prog = programme_hourly(programme)
     weights = pd.read_csv(ROOT / "results" / "point_weights.csv", index_col="point")
     raw = build_weather(ROOT / "data" / "raw" / "open_meteo", "gfs_prev")
     temp = hourly_temperature(raw, "temperature_2m_previous_day2", weights["weight"])
-    temp = temp[[d <= VAL_END for d in temp.index]]
+    temp = temp[[d <= end for d in temp.index]]
 
     actual = definitive_hourly(supply)
     shapes = version_shapes(valid_versions(postop, b1), prog)
@@ -113,17 +119,14 @@ def main() -> int:
     y = shape_target(x, actual)
     dates = np.array(x["date"])
 
-    daily_fc = pd.read_parquet(INTERIM / "backtest" / "sensitivity_reaudit.parquet")[
-        "hyb_fc"
-    ]
     s1_parts = []
-    for r in month_starts(VAL_START, VAL_END):
+    for r in month_starts(start, end):
         last = definitive_available_until(r)
         nxt = last + dt.timedelta(days=1)
         first = nxt.replace(year=nxt.year - WINDOW_YEARS)
         nxt_month = (r.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
         train = (dates >= first) & (dates <= last) & y.notna().to_numpy()
-        test = (dates >= r) & (dates < nxt_month)
+        test = (dates >= r) & (dates < nxt_month) & (dates <= end)
         if not test.any():
             continue
         model = HistGradientBoostingRegressor(**TREES)
@@ -132,55 +135,73 @@ def main() -> int:
         s1_parts.append(shares_from_model(x[test], pred))
     s1 = pd.concat(s1_parts)
 
-    val_days = [
+    days_out = [
         d
         for d in s1.index
         if d in actual.index and d in daily_fc.index and not pd.isna(daily_fc[d])
     ]
-    e_hat = daily_fc.loc[val_days]
-    pred_s1 = s1.loc[val_days].mul(e_hat, axis=0)
-    pred_s0 = s0.loc[val_days].mul(e_hat, axis=0)
-    b1h = prog.reindex(val_days)[T_COLS]
+    e_hat = daily_fc.loc[days_out]
+    pred_s1 = s1.loc[days_out].mul(e_hat, axis=0)
+    pred_s0 = s0.loc[days_out].mul(e_hat, axis=0)
+    b1h = prog.reindex(days_out)[T_COLS].astype(float)
     b1h.columns = HOURS
-    common = [d for d in val_days if not b1h.loc[d].isna().any()]
+    return pred_s1, pred_s0, b1h, actual.loc[days_out], days_out
 
+
+def compare_hourly(
+    pred_s1: pd.DataFrame,
+    pred_s0: pd.DataFrame,
+    b1h: pd.DataFrame,
+    actual: pd.DataFrame,
+    days: list[dt.date],
+) -> tuple[dict[str, Any], pd.Series, pd.Series, pd.Series, list[dt.date]]:
+    """Scores of S1, S0 and B1 on the days all three exist, and their daily APEs."""
+    common = [d for d in days if not b1h.loc[d].isna().any()]
     result: dict[str, Any] = {
-        "period": [VAL_START, VAL_END],
-        "days_with_s0_s1": len(val_days),
+        "days_with_s0_s1": len(days),
         "common_days_with_b1": len(common),
         "S1": summary(pred_s1, actual, common),
         "S0": summary(pred_s0, actual, common),
-        "B1": summary(b1h.astype(float), actual, common),
+        "B1": summary(b1h, actual, common),
     }
-    a1, a0, ab = (
-        daily_ape(p, actual, common) for p in (pred_s1, pred_s0, b1h.astype(float))
-    )
-    dm = diebold_mariano(a1, a0, alternative="two-sided")
-    result["dm_s1_vs_s0_two_sided"] = dm
-    result["dm_chosen_vs_b1_two_sided"] = None
+    a1, a0, ab = (daily_ape(p, actual, common) for p in (pred_s1, pred_s0, b1h))
+    result["dm_s1_vs_s0_two_sided"] = diebold_mariano(a1, a0, alternative="two-sided")
     result["ci95_hourly_mape_s1_minus_s0"] = block_bootstrap_ci(
         pd.concat([a1, a0], axis=1), lambda a: float(a[:, 0].mean() - a[:, 1].mean())
     )
+    return result, a1, a0, ab, common
+
+
+def save_hourly(path: Path, preds: dict[str, pd.DataFrame]) -> None:
+    saved = pd.concat(preds, axis=1)
+    saved.columns = [f"{c[0]}_h{int(c[1]):02d}" for c in saved.columns.to_list()]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    saved.to_parquet(path)
+
+
+def main() -> int:
+    daily_fc = pd.read_parquet(INTERIM / "backtest" / "sensitivity_reaudit.parquet")[
+        "hyb_fc"
+    ]
+    pred_s1, pred_s0, b1h, actual, days = hourly_forecasts(VAL_START, VAL_END, daily_fc)
+    cmp, a1, a0, ab, _ = compare_hourly(pred_s1, pred_s0, b1h, actual, days)
+    result: dict[str, Any] = {"period": [VAL_START, VAL_END], **cmp}
     adopt = (
         result["S1"]["hourly_mape_pct"] < result["S0"]["hourly_mape_pct"]
-        and float(dm["p_value"]) < 0.05
+        and float(result["dm_s1_vs_s0_two_sided"]["p_value"]) < 0.05
     )
-    chosen = a1 if adopt else a0
     result["dm_chosen_vs_b1_two_sided"] = diebold_mariano(
-        chosen, ab, alternative="two-sided"
+        a1 if adopt else a0, ab, alternative="two-sided"
     )
     result["decision"] = {"shape_model": "S1" if adopt else "S0"}
     (ROOT / "results" / "backtest").mkdir(parents=True, exist_ok=True)
     (ROOT / "results" / "backtest" / "hourly_validation.json").write_text(
         json.dumps(result, indent=2, default=str) + "\n", encoding="utf-8"
     )
-    (INTERIM / "backtest").mkdir(parents=True, exist_ok=True)
-    saved = pd.concat(
-        {"S1": pred_s1, "S0": pred_s0, "B1": b1h, "actual": actual.loc[val_days]},
-        axis=1,
+    save_hourly(
+        INTERIM / "backtest" / "hourly_validation.parquet",
+        {"S1": pred_s1, "S0": pred_s0, "B1": b1h, "actual": actual},
     )
-    saved.columns = [f"{c[0]}_h{int(c[1]):02d}" for c in saved.columns.to_list()]
-    saved.to_parquet(INTERIM / "backtest" / "hourly_validation.parquet")
     print(json.dumps(result, indent=2, default=str))
     return 0
 

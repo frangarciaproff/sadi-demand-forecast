@@ -1,0 +1,84 @@
+{
+  "label": "daily totals already seen",
+  "shape_model": "S1",
+  "daily_forecast": "v1 F-hyb test forecasts (test_evaluation_seen_hyb)",
+  "period": [
+    "2025-10-01",
+    "2026-09-30"
+  ],
+  "days_with_s0_s1": 365,
+  "common_days_with_b1": 362,
+  "S1": {
+    "days": 362,
+    "hourly_mape_pct": 4.058,
+    "hourly_bias_pct": 0.137,
+    "peak_mape_pct": 3.376,
+    "peak_bias_pct": -0.006,
+    "peak_hour_mean_abs_error_h": 1.07,
+    "peak_hour_within_1h_share": 0.887
+  },
+  "S0": {
+    "days": 362,
+    "hourly_mape_pct": 4.563,
+    "hourly_bias_pct": 0.186,
+    "peak_mape_pct": 3.578,
+    "peak_bias_pct": -0.152,
+    "peak_hour_mean_abs_error_h": 1.38,
+    "peak_hour_within_1h_share": 0.829
+  },
+  "B1": {
+    "days": 362,
+    "hourly_mape_pct": 3.971,
+    "hourly_bias_pct": 2.817,
+    "peak_mape_pct": 3.416,
+    "peak_bias_pct": 2.544,
+    "peak_hour_mean_abs_error_h": 0.7,
+    "peak_hour_within_1h_share": 0.95
+  },
+  "dm_s1_vs_s0_two_sided": {
+    "n_days": 362,
+    "mean_loss_difference": -0.5047,
+    "statistic_hln": -10.181,
+    "p_value": 0.0,
+    "alternative": "two-sided",
+    "hac_lag": 5
+  },
+  "ci95_hourly_mape_s1_minus_s0": [
+    -0.6084,
+    -0.4151
+  ],
+  "dm_chosen_vs_b1_two_sided": {
+    "n_days": 362,
+    "mean_loss_difference": 0.0873,
+    "statistic_hln": 0.523,
+    "p_value": 0.6016,
+    "alternative": "two-sided",
+    "hac_lag": 5
+  },
+  "ci95_hourly_mape_chosen_minus_b1": [
+    -0.2451,
+    0.401
+  ],
+  "by_quarter_hourly_mape": {
+    "2025Q4": {
+      "S1": 4.083,
+      "S0": 4.715,
+      "B1": 3.974
+    },
+    "2026Q1": {
+      "S1": 5.272,
+      "S0": 5.772,
+      "B1": 4.673
+    },
+    "2026Q2": {
+      "S1": 3.397,
+      "S0": 3.851,
+      "B1": 3.165
+    },
+    "2026Q3": {
+      "S1": 3.508,
+      "S0": 3.94,
+      "B1": 4.086
+    }
+  }
+}

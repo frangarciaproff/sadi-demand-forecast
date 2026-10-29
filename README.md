@@ -21,10 +21,10 @@ As of 2026-10-29.
 | Target definition | Fixed and checked against the operator's balance (below) |
 | Weather inputs | Reanalysis (ERA5) and 48-hour-lead forecasts (GFS) for 15 points, downloaded |
 | Feature table and baselines | Built: lags as known at the issue time, calendar, demand-weighted temperature; baseline errors in [`results/baselines.json`](results/baselines.json) |
-| Models, backtests | Daily energy: decision sequence on the validation year, test year evaluated once, re-audit checks (below); daily peak deferred to v2 |
+| Models, backtests | Daily energy: decision sequence on the validation year, test year evaluated once, re-audit checks (below). Hourly curve and daily peak (v2): validated, test year evaluated once, in production |
 | Forecasts | Running on AWS Lambda since 2026-10-29: daily forecast at 09:55 ART, scores against actuals and the operator's programme, monthly retraining |
 | Public page | [d32m7h2zphotl6.cloudfront.net](https://d32m7h2zphotl6.cloudfront.net), updated daily |
-| Continuous deployment | Not started |
+| Continuous deployment | GitHub Actions: tests, Terraform plan, manual approval, apply (since 2026-10-29) |
 
 ## What is built
 
@@ -188,7 +188,36 @@ models beat it in one quarter of four (July–September 2026). On the 9 out-of-r
 trees 5.29 %, hybrid 5.02 %, programme 4.41 %; this comparison is provisional, because days
 with load shedding are not yet listed (no source).
 
-The model forecasts daily energy only; the daily peak is deferred to v2.
+## Hourly curve and daily peak (v2)
+
+The hourly forecast is the daily forecast above split into 24 hourly shares, so the hours always
+add up to the daily total ([SPEC 11](SPEC.md)). The shares come from a tree model (S1) trained
+on the change in shape relative to the median shape of the same weekday in the previous four
+weeks (S0), using the hour, the calendar and the hourly forecast temperature. S1 was chosen on
+the validation year by a rule fixed in advance
+([`results/backtest/hourly_validation.json`](results/backtest/hourly_validation.json)) and then
+evaluated once on the test year
+([`results/test/test_evaluation_hourly.json`](results/test/test_evaluation_hourly.json)). The
+daily totals it scales had already been scored on that year, so the test is labelled "daily
+totals already seen"; the shapes had not.
+
+| Test year (362 days) | Hourly MAPE | Daily peak MAPE | Peak bias | Peak hour within 1 h |
+|---|---|---|---|---|
+| Model (S1 × hybrid daily) | 4.06 % | 3.38 % | −0.01 % | 89 % |
+| Median shape (S0 × hybrid daily) | 4.56 % | 3.58 % | −0.15 % | 83 % |
+| Operator programme, on the same hours | 3.59 % | 3.17 % | +1.95 % | 94 % |
+| Operator programme, as published | 3.97 % | 3.42 % | +2.54 % | 95 % |
+
+S1 beats S0 on every quarter (hourly MAPE −0.50 points, 95 % CI −0.61 to −0.42; Diebold-Mariano
+p < 0.001), as on validation. The operator labels its hours differently: its hour h is centred
+on h:00, while the target's hour h covers the hour before h:00
+([`results/checks/provisional_hourly.json`](results/checks/provisional_hourly.json)). The
+pre-registered comparison used the programme as published (model +0.09 points, p = 0.60). On
+the same hours (mean of two consecutive published hours) the operator is better: +0.47 points
+(CI +0.12 to +0.80, p = 0.007) on the test year, +0.16 points (CI −0.17 to +0.53, p = 0.37) on
+validation ([`results/checks/programme_alignment.json`](results/checks/programme_alignment.json)).
+The model's peak level is unbiased, where the operator's programme overestimates it by about
+2 %, and the model is issued about 11 hours earlier.
 
 ## Repository layout
 

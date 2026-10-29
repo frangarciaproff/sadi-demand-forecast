@@ -76,6 +76,99 @@ function legend() {
   }
 }
 
+// Rounded axis range and step; a minimum span of 15 % of the maximum keeps a few
+// close values readable.
+function niceScale(values) {
+  let lo = Math.min(...values), hi = Math.max(...values);
+  const minSpan = 0.15 * hi;
+  if (hi - lo < minSpan) {
+    const mid = (hi + lo) / 2;
+    lo = mid - minSpan / 2;
+    hi = mid + minSpan / 2;
+  }
+  const raw = ((hi - lo) * 1.1) / 4;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((c) => c >= raw);
+  return { lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step, step };
+}
+
+const hh = (h) => String(h).padStart(2, "0") + ":00";
+const mw = (x) => (x === null || x === undefined ? "–" : Math.round(x).toLocaleString("en-GB"));
+
+// Tomorrow's hourly curve (MWh in an hour = average MW over it), with the operator's
+// hourly programme once it is published.
+function curveChart(data) {
+  const c = data.curve;
+  const section = document.getElementById("curve-section");
+  if (!c) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  document.getElementById("curve-date").textContent = longLabel(c.date);
+  const op = c.b1_aligned_mwh; // the operator's programme on the same hours as the model
+  const opPeak = op ? Math.max(...op) : null;
+  document.getElementById("curve-note").textContent =
+    `Model peak ${mw(c.peak_mw)} MW, ${hh(c.peak_hour - 1)}–${hh(c.peak_hour)}` +
+    (op ? ` · operator peak ${mw(opPeak)} MW, ${hh(op.indexOf(opPeak))}–${hh(op.indexOf(opPeak) + 1)}` : " · operator programme not yet published (about 21:30)");
+  const hs = data.summary.hourly;
+  document.getElementById("curve-score").textContent = hs && hs.days
+    ? `Hourly error so far (mean absolute percentage, ${hs.days} days; provisional actuals until the monthly balance): model ${fmt(hs.mape_model_pct, 2)} %, operator ${fmt(hs.mape_b1_pct, 2)} %.`
+    : "";
+
+  const svg = document.getElementById("curve");
+  const tip = document.getElementById("curve-tooltip");
+  while (svg.lastChild && svg.lastChild.nodeName !== "title") svg.removeChild(svg.lastChild);
+  const W = Math.max(320, svg.clientWidth || 800);
+  const HC = 260;
+  svg.setAttribute("viewBox", `0 0 ${W} ${HC}`);
+  const values = [...c.forecast_mwh, ...(op || [])];
+  const { lo, hi, step } = niceScale(values);
+  const x = (i) => PAD.left + (i * (W - PAD.left - PAD.right)) / 23;
+  const y = (v) => PAD.top + ((hi - v) * (HC - PAD.top - PAD.bottom)) / (hi - lo);
+  const grid = el("g", { class: "grid" }, svg);
+  const axis = el("g", { class: "axis" }, svg);
+  for (let g = lo; g <= hi + 1e-9; g += step) {
+    el("line", { x1: PAD.left, x2: W - PAD.right, y1: y(g), y2: y(g) }, grid);
+    const t = el("text", { x: PAD.left - 6, y: y(g) + 4, "text-anchor": "end" }, axis);
+    t.textContent = (g / 1000).toFixed(g % 1000 ? 1 : 0) + "k";
+  }
+  const every = W < 520 ? 6 : 3;
+  for (let i = 0; i < 24; i += every) {
+    const t = el("text", { x: x(i), y: HC - 8, "text-anchor": "middle" }, axis);
+    t.textContent = hh(i);
+  }
+  const line = (vals) => vals.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join("");
+  if (op) el("path", { class: "line operator", d: line(op) }, svg);
+  el("path", { class: "line model", d: line(c.forecast_mwh) }, svg);
+  const k = c.peak_hour - 1;
+  el("circle", { class: "dot model", cx: x(k), cy: y(c.forecast_mwh[k]), r: 5 }, svg);
+
+  const cross = el("line", { class: "crosshair", y1: PAD.top, y2: HC - PAD.bottom, visibility: "hidden" }, svg);
+  const hit = el("rect", { x: PAD.left, y: 0, width: W - PAD.left - PAD.right, height: HC, fill: "transparent" }, svg);
+  const show = (evt) => {
+    const box = svg.getBoundingClientRect();
+    const px = ((evt.clientX - box.left) * W) / box.width;
+    const i = Math.max(0, Math.min(23, Math.round(((px - PAD.left) * 23) / (W - PAD.left - PAD.right))));
+    cross.setAttribute("x1", x(i));
+    cross.setAttribute("x2", x(i));
+    cross.setAttribute("visibility", "visible");
+    tip.replaceChildren();
+    tip.appendChild(html("p", `${hh(i)}–${hh(i + 1)}`, "t"));
+    tip.appendChild(html("p", `Model ${mw(c.forecast_mwh[i])} MW`));
+    tip.appendChild(html("p", op ? `Operator ${mw(op[i])} MW` : "Operator not yet published"));
+    tip.hidden = false;
+    const left = (x(i) * box.width) / W;
+    tip.style.left = Math.min(Math.max(0, left + 12), box.width - tip.offsetWidth) + "px";
+  };
+  hit.addEventListener("pointermove", show);
+  hit.addEventListener("pointerdown", show);
+  hit.addEventListener("pointerleave", () => {
+    tip.hidden = true;
+    cross.setAttribute("visibility", "hidden");
+  });
+}
+
 function chart(data) {
   const svg = document.getElementById("chart");
   const tip = document.getElementById("tooltip");
@@ -89,18 +182,7 @@ function chart(data) {
   for (const r of rows) {
     for (const v of [r.forecast_mwh, r.b1_mwh, actual(r) && actual(r).v]) if (v) values.push(v / 1000);
   }
-  let lo = Math.min(...values), hi = Math.max(...values);
-  const minSpan = 0.15 * hi; // a few days of data still get a readable scale
-  if (hi - lo < minSpan) {
-    const mid = (hi + lo) / 2;
-    lo = mid - minSpan / 2;
-    hi = mid + minSpan / 2;
-  }
-  const raw = ((hi - lo) * 1.1) / 4;
-  const mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((c) => c >= raw);
-  lo = Math.floor(lo / step) * step;
-  hi = Math.ceil(hi / step) * step;
+  const { lo, hi, step } = niceScale(values);
   const n = rows.length;
   const x = (i) => PAD.left + (n === 1 ? (W - PAD.left - PAD.right) / 2 : (i * (W - PAD.left - PAD.right)) / (n - 1));
   const y = (g) => PAD.top + ((hi - g) * (H - PAD.top - PAD.bottom)) / (hi - lo);
@@ -205,6 +287,7 @@ async function main() {
     return;
   }
   hero(data);
+  curveChart(data);
   chart(data);
   table(data);
   document.getElementById("generated").textContent = data.generated_at_art.replace("T", " ").slice(0, 16) + " (Argentina)";
@@ -212,7 +295,10 @@ async function main() {
   let t;
   window.addEventListener("resize", () => {
     clearTimeout(t);
-    t = setTimeout(() => chart(data), 150);
+    t = setTimeout(() => {
+      chart(data);
+      curveChart(data);
+    }, 150);
   });
 }
 

@@ -349,4 +349,11 @@ Written 2026-10-29 before any hourly model was fitted (ROADMAP F3, F14).
 - Review point R6: independent audit of this section, the code and the validation results,
   before the single test evaluation.
 - Production: the forecast record adds 24 hourly values and the peak; the page adds tomorrow's
-  curve next to the operator's hourly programme.
+  curve next to the operator's hourly programme. The shape model is retrained with v1 each month and
+  stored in the same model version; if the curve cannot be built (fewer than two reference
+  shapes, incomplete hourly weather, no shape model) the daily forecast is issued without it.
+  Live hourly scores use the provisional hourly actual (latest valid version − programmed
+  hourly exports) and then D7.
+- Operator benchmark on the same hours (added after the test run, DECISIONS 2026-10-29): the
+  programme's hour h is centred on h:00, so it is also scored as the mean of its hours h−1 and
+  h. The pre-registered comparison (as published) is kept and reported next to it.

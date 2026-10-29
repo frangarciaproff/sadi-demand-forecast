@@ -186,3 +186,24 @@ def shares_from_model(x: pd.DataFrame, pred: np.ndarray) -> pd.DataFrame:
 
 
 TREES = dict(TREE_PARAMS)
+
+
+def align_programme(prog: pd.DataFrame) -> pd.DataFrame:
+    """The operator's hourly programme (T_COLS) on D7's hours (DECISIONS 2026-10-29).
+
+    The programme's hour h is centred on h:00, D7's hour h covers (h-1):00..h:00, so
+    the aligned value of hour h is the mean of programme hours h-1 and h; hour 1 uses
+    hour 24 of the previous day (hour 1 itself if that day is missing). Returns a
+    date x hour 1..24 frame.
+    """
+    t = prog[T_COLS].astype(float).copy()
+    t.columns = HOURS
+    idx = pd.Index(t.index)
+    prev_day = [d - dt.timedelta(days=1) for d in idx]
+    prev24 = t[24].reindex(prev_day).to_numpy()
+    first = np.where(np.isnan(prev24), t[1].to_numpy(), prev24)
+    vals = t.to_numpy()
+    out = np.empty_like(vals)
+    out[:, 0] = (first + vals[:, 0]) / 2
+    out[:, 1:] = (vals[:, :-1] + vals[:, 1:]) / 2
+    return pd.DataFrame(out, index=t.index, columns=HOURS)

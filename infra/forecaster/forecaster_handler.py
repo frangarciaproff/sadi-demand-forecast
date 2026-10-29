@@ -6,6 +6,7 @@ Events:
     {"mode": "score"}    scores only
     {"mode": "evening"}  documents published today (operator programme), page data
     {"mode": "site"}     public page data only (site bucket)
+    {"mode": "shape"}    shape model (hourly curve) for the current champion version
 """
 
 from __future__ import annotations
@@ -35,6 +36,8 @@ def handler(event: dict[str, Any], context: object) -> dict[str, Any]:
         out = {"site_days": service.publish_site(store, site, at)}
     elif mode == "monthly":
         out = service.monthly(store, at)
+    elif mode == "shape":
+        out = {"shape_model": service.shape(store)}
     elif mode == "score":
         out = {"scores_written": service.score(store)}
     else:

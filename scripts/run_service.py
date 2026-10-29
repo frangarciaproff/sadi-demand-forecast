@@ -4,6 +4,7 @@ Local (the PC archive, state seeded with seed_state.py):
     uv run python scripts/run_service.py daily
     uv run python scripts/run_service.py monthly
     uv run python scripts/run_service.py score
+    uv run python scripts/run_service.py shape   (shape model for the champion)
 S3 (needs boto3 and AWS credentials; the Lambda does the same):
     uv run --with boto3 python scripts/run_service.py daily --bucket <bucket>
 
@@ -28,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["daily", "monthly", "score", "site"])
+    p.add_argument("mode", choices=["daily", "monthly", "score", "site", "shape"])
     p.add_argument("--bucket")
     p.add_argument("--root", type=Path, default=ROOT / "data")
     p.add_argument("--at", type=dt.datetime.fromisoformat)
@@ -41,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
         out = service.daily(store, at, site=site)
     elif args.mode == "site":
         out = {"site_days": service.publish_site(store, site or store, at)}
+    elif args.mode == "shape":
+        out = {"shape_model": service.shape(store)}
     elif args.mode == "monthly":
         out = service.monthly(store, at)
     else:
