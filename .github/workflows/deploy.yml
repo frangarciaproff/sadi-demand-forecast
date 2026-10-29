@@ -2,9 +2,12 @@ name: deploy
 
 # On every push to main (only the repository owner can push there):
 #   test   - lint, types and tests, no AWS access;
-#   plan   - environment "plan": read-only AWS role, prints terraform plan;
+#   plan   - environment "plan": read-only AWS role, prints terraform plan and a
+#            fingerprint (SHA-256) of the planned changes;
 #   apply  - environment "production" (manual approval): builds and pushes the image
-#            (tag = commit), applies, publishes the page files.
+#            (tag = commit), plans again and applies only if the fingerprint equals the
+#            approved one (the plan file itself is never uploaded: it holds the alert
+#            email in plain text), then publishes the page files.
 # AWS access through OIDC (no stored keys). Actions pinned to commit SHAs.
 on:
   push:
@@ -37,11 +40,18 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     environment: plan
+    outputs:
+      fingerprint: ${{ steps.plan.outputs.fingerprint }}
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Show OIDC claims (temporary diagnostic)
+        run: |
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
+          echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq '{sub, aud, repository, environment, ref}' || true
+          echo "Role variable: '${{ vars.AWS_PLAN_ROLE_ARN }}'"
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
@@ -52,10 +62,15 @@ jobs:
           terraform_wrapper: false
       - run: terraform -chdir=infra init -input=false
       - name: Plan (read this before approving the apply job)
+        id: plan
         env:
           TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
           TF_VAR_forecaster_image_tag: ${{ github.sha }}
-        run: terraform -chdir=infra plan -input=false -lock=false
+        run: |
+          terraform -chdir=infra plan -input=false -lock=false -out=tfplan
+          terraform -chdir=infra show -json tfplan | jq -cS '.resource_changes' | sha256sum | cut -c1-64 > fingerprint
+          echo "Plan fingerprint: $(cat fingerprint)"
+          echo "fingerprint=$(cat fingerprint)" >> "$GITHUB_OUTPUT"
 
   apply:
     needs: plan
@@ -87,11 +102,21 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
       - run: terraform -chdir=infra init -input=false
-      - name: Apply
+      - name: Apply the approved plan only
         env:
           TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
           TF_VAR_forecaster_image_tag: ${{ github.sha }}
-        run: terraform -chdir=infra apply -input=false -auto-approve
+          APPROVED: ${{ needs.plan.outputs.fingerprint }}
+        run: |
+          terraform -chdir=infra plan -input=false -out=tfplan
+          NOW=$(terraform -chdir=infra show -json tfplan | jq -cS '.resource_changes' | sha256sum | cut -c1-64)
+          echo "approved: $APPROVED"
+          echo "now:      $NOW"
+          if [ -z "$APPROVED" ] || [ "$NOW" != "$APPROVED" ]; then
+            echo "The plan changed after approval. Nothing applied; re-run the workflow and review the new plan."
+            exit 1
+          fi
+          terraform -chdir=infra apply -input=false tfplan
       - name: Publish the page files
         run: |
           SITE=$(terraform -chdir=infra output -raw site_bucket)
