@@ -1,6 +1,8 @@
 # SPEC — sadi-demand-forecast
 
-Status: v0.7 (2026-10-29), frozen until backtest results. v0.7 applies the 2026-10-29 audit
+Status: v0.8 (2026-10-29). v0.8: D8 summation excludes YACYHIPY; validation decision sequence
+run (family F-tree, window 5 years, weather M-fc; DECISIONS 2026-10-29); O15 narrowed.
+v0.7 (2026-10-29), frozen until backtest results. v0.7 applies the 2026-10-29 audit
 (label embargo in refits, backtest start, four-week reference level, scoring caveats, S4).
 v0.6: target definition and source, live data handling. Where docs/method_notes.md (written
 before v0.6) disagrees with this file, this file wins. Deferred lines in docs/ROADMAP.md.
@@ -53,6 +55,8 @@ Information set at issue time:
 
 D8 summation rule: supply = sum of VALORES_GENERADORES.ENERGIA over all units and hours (imports
 are units of the table). CONTROL_VALORES_CC repeats the combined-cycle units and is never added.
+Unit YACYHIPY (Paraguayan share of Yacyretá, listed from 2024-11) is not supply to the SADI and is
+excluded (DECISIONS 2026-10-29).
 Validated against D7 supply on 41 sample days 2018–2024: complement within 0.00–0.18 % (2018–2019)
 and 0.00–0.07 % (2020 →).
 
@@ -261,8 +265,8 @@ extra weather variables, public API, conversational interface, redistribution of
 
 ## 10. Open items
 
-- O15: D8 vs D7 on the full archive (daily totals and hourly values, all years incl. 2024-11 →
-  2026-10); D8 daily vs complement distribution; days with several complements.
+- O15: D8 vs D7 hourly values (daily totals checked 2026-10-29 after the YACYHIPY exclusion:
+  monthly median within ±0.06 %, 2018 → 2026-09); isolated days far off (2022, 2023).
 - O16: hourly target for T2: D8 hourly supply − D7 hourly exports; check D8 hourly vs D7 hourly.
 - O10: FALLAS meaning (load shedding / unserved energy).
 - O11: remote Terraform state before CD.

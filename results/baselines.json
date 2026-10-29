@@ -22,11 +22,11 @@
   "validation": {
     "B0_seasonal_naive": {
       "n_days": 365,
-      "mape_pct": 9.068,
-      "mae_gwh": 36.078,
-      "bias_pct": 2.275,
-      "spread_sd_pct": 12.212,
-      "p90_abs_pct": 18.965
+      "mape_pct": 8.683,
+      "mae_gwh": 35.083,
+      "bias_pct": 0.4,
+      "spread_sd_pct": 11.435,
+      "p90_abs_pct": 17.673
     },
     "B1_operator_programme": {
       "n_days": 358,

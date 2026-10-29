@@ -35,7 +35,7 @@ DAILY = "PARTE_POST_OPERATIVO"
 COMPLEMENT = "PARTE_POST_OPERATIVO_COMP"
 N_HOURS = 24
 SUPPLY_COLS = [f"s{k:02d}" for k in range(1, N_HOURS + 1)]
-CACHE_VERSION = 3
+CACHE_VERSION = 4  # 4: YACYHIPY excluded (tools/mdb/supply.mjs)
 # Access databases are read with the Node package mdb-reader (tools/mdb): the Python
 # readers tried (access-parser 0.0.6 and its 2025 master) fail on every row of the
 # 2024 files.
@@ -180,6 +180,7 @@ def build_postop(raw_dir: Path, cache_dir: Path, workers: int = 4) -> pd.DataFra
             "supply_mwh": float(sum(hourly)),
             "hours_present": res["hours_present"],
             "n_units": res["n_units"],
+            "excluded_mwh": res.get("excluded_mwh", 0.0),
         }
         rec.update(dict(zip(SUPPLY_COLS, hourly, strict=True)))
         records.append(rec)

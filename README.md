@@ -6,7 +6,7 @@ market operator. This repository holds the data collection, the operator's 16-ye
 the parsers, and the data checks that fix what is being forecast. **No forecasting model
 exists yet** (see [Status](#status)).
 
-Design: [SPEC.md](SPEC.md) (draft v0.6). Every decision and finding, with its evidence:
+Design: [SPEC.md](SPEC.md) (v0.8). Every decision and finding, with its evidence:
 [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## Status
@@ -21,7 +21,7 @@ As of 2026-10-29.
 | Target definition | Fixed and checked against the operator's balance (below) |
 | Weather inputs | Reanalysis (ERA5) and 48-hour-lead forecasts (GFS) for 15 points, downloaded |
 | Feature table and baselines | Built: lags as known at the issue time, calendar, demand-weighted temperature; baseline errors in [`results/baselines.json`](results/baselines.json) |
-| Models, backtests | Not started |
+| Models, backtests | Decision sequence run on the validation year (below); test year not evaluated |
 | Forecasts, scoring, dashboard, continuous deployment | Not started |
 
 ## What is built
@@ -48,7 +48,7 @@ AWS Lambda function (Python 3.12, arm64), deployed with Terraform ([`infra/`](in
 | Programación Diaria | Day-ahead programme: hourly net demand, losses, pumping, exports | 2009-12-31 → present, 6,318 attachments | 3.1 GB |
 | Parte Semanal | Weekly report: hourly demand by area | 2010-01-07 → present, 1,929 attachments | 3.4 GB |
 | Informe Síntesis Mensual | Monthly consolidated bases: hourly supply by technology, imports, exports, demand by type and province | 2018-01-01 → 2026-09-30 (6 bases) | 0.3 GB |
-| Parte Post Operativo | Daily post-operation report: hourly energy of every generating unit (Access database); daily version and a corrected version about a month later | 2018 → present (in progress) | ≈ 1–6 MB per file |
+| Parte Post Operativo | Daily post-operation report: hourly energy of every generating unit (Access database); daily version and a corrected version about a month later | 2018 → present, 6,918 documents | ≈ 1–6 MB per file |
 
 Raw data is not committed and not redistributed (see [Data and terms](#data-and-terms)).
 
@@ -99,17 +99,56 @@ Other measured findings that shaped the design (details and numbers in DECISIONS
   ([`results/eda/validity_check.json`](results/eda/validity_check.json)). A validity check
   rejects the gross cases before use; the rest is carried, as published, into backtests
   (SPEC 2.2).
+- From 2024-11 the daily post-operation databases list the Paraguayan share of the Yacyretá
+  dam as a separate unit (YACYHIPY). Counting it overstates supply by about 4 % in the summer
+  of 2024-25 and by 0.6–1 % afterwards; the monthly bases and the operator's gross-energy
+  series do not count it. It is excluded from the sum, and the corrected reports match the
+  monthly bases within ±0.06 % (monthly median) in every month with both sources from 2024-10 to 2026-09. The
+  first backtest, run before the fix, is kept as invalid in
+  [`results/backtest/invalid/`](results/backtest/invalid).
+
+## Validation results
+
+Validation year 2024-10-01 → 2025-09-30, forecasts issued at 10:00 on the day before, monthly
+refits that only use targets already published at the refit date, weather forecast inputs
+(GFS, 48-hour lead). Decisions were taken in a fixed order with rules written down before the
+first fit (DECISIONS 2026-10-29). The test year (2025-10-01 → 2026-09-30) has not been
+evaluated.
+
+| Step | Compared | Chosen | Validation error (MAPE) |
+|---|---|---|---|
+| 1. Model family | gradient-boosted trees vs linear degree-day part + trees | trees | 4.31 % vs 4.29 %; the hybrid failed the extreme-heat check (5.98 % vs 4.35 % on 65 out-of-range days, 2021–2025) |
+| 2. Training window | 3 years, 5 years, all (from 2018) | 5 years | 4.44 %, 4.27 %, 4.31 % (differences not significant) |
+| 3. Weather in training | reanalysis (ERA5) vs archived forecasts (GFS) | forecasts | 4.27 % vs 3.37 % (Diebold-Mariano p = 0.005) |
+
+Final configuration against the baselines on the 358 days where all exist
+([`results/backtest/`](results/backtest)):
+
+| Forecast | MAPE | 95 % CI | Mean error (bias) | SD of error |
+|---|---|---|---|---|
+| Model (trees, 5 years, GFS) | 3.36 % | 3.04–3.76 % | +0.14 % | 4.41 % |
+| Operator programme (B1) | 3.39 % | 3.02–3.80 % | +2.98 % | 3.05 % |
+| Same weekday, median of 4 weeks (B0) | 8.68 % | 7.47–10.26 % | +0.50 % | 11.47 % |
+
+The model matches the operator's day-ahead programme on average error (Diebold-Mariano
+p = 0.89) with almost no bias, but its errors are more spread out: the programme
+overestimates by about 3 % by design (security of supply) and is otherwise tighter.
+The model's errors remain correlated from one day to the next (0.44, against 0.20 for the
+programme), which points to information it does not yet use. Training on reanalysis and
+forecasting with forecast inputs costs about 0.9 percentage points; with reanalysis inputs
+on the forecast day (not available in production; step-1 configuration) the trees reach 2.81 %.
 
 ## Repository layout
 
-    SPEC.md                    design (draft)
+    SPEC.md                    design
     docs/DECISIONS.md          append-only log of decisions and findings
     docs/data_inventory.md     source formats and parsing rules
     infra/                     Terraform for the AWS collector
     scripts/                   collector, downloads, table builders, data checks
-    src/sadi_forecast/         parsers and table construction
+    src/sadi_forecast/         parsers, tables, features, models, evaluation
     tests/                     pytest suite (fake CAMMESA server for the collector)
     results/eda/               aggregate results of the data checks (no raw values)
+    results/backtest/          validation scores and decisions (no raw values)
 
 ## Running it
 
@@ -120,6 +159,8 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/).
     uv run python scripts/collect_cammesa.py snapshot   # local archive under data/raw
     uv run python scripts/get_sintesis.py               # monthly balance bases
     uv run python scripts/check_supply_balance.py
+    uv run python scripts/build_features.py
+    uv run python scripts/backtest.py --step family    # then --step window, --step weather
 
 Deploying the collector: `terraform -chdir=infra init`, `plan`, `apply` with an AWS
 profile and the variables in `infra/terraform.tfvars.example`.
