@@ -46,6 +46,19 @@ variable "github_repository" {
   default     = "frangarciaproff/sadi-demand-forecast"
 }
 
+# GitHub's OIDC subject for this repository includes the numeric owner and repository
+# ids (owner@id/repo@id), seen in the token on 2026-10-29. Matching on ids also rejects
+# a different repository later created under the same name.
+variable "github_owner_id" {
+  type    = string
+  default = "285775576"
+}
+
+variable "github_repository_id" {
+  type    = string
+  default = "1433717782"
+}
+
 provider "aws" {
   region  = var.region
   profile = var.aws_profile
@@ -61,11 +74,13 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  account     = data.aws_caller_identity.current.account_id
-  raw_bucket  = "arn:aws:s3:::sadi-demand-raw-${local.account}"
-  site_bucket = "arn:aws:s3:::sadi-demand-site-${local.account}"
-  logs        = "arn:aws:logs:${var.region}:${local.account}:log-group:/aws/lambda"
-  lambda      = "arn:aws:lambda:${var.region}:${local.account}:function"
+  github_owner = split("/", var.github_repository)[0]
+  github_repo  = split("/", var.github_repository)[1]
+  account      = data.aws_caller_identity.current.account_id
+  raw_bucket   = "arn:aws:s3:::sadi-demand-raw-${local.account}"
+  site_bucket  = "arn:aws:s3:::sadi-demand-site-${local.account}"
+  logs         = "arn:aws:logs:${var.region}:${local.account}:log-group:/aws/lambda"
+  lambda       = "arn:aws:lambda:${var.region}:${local.account}:function"
   runtime_roles = [
     "arn:aws:iam::${local.account}:role/sadi-collector-lambda",
     "arn:aws:iam::${local.account}:role/sadi-collector-scheduler",
@@ -286,7 +301,7 @@ data "aws_iam_policy_document" "github_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${each.key}"]
+      values   = ["repo:${local.github_owner}@${var.github_owner_id}/${local.github_repo}@${var.github_repository_id}:environment:${each.key}"]
     }
   }
 }
