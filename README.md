@@ -3,8 +3,8 @@
 Day-ahead forecasting of electricity demand on Argentina's interconnected grid (SADI), run
 as a monitored service on AWS and compared with the forecast of CAMMESA, the wholesale
 market operator. This repository holds the data collection, the operator's 16-year archive,
-the parsers, and the data checks that fix what is being forecast. **No forecasting model
-exists yet** (see [Status](#status)).
+the parsers, the data checks that fix what is being forecast, and the daily-energy model
+with its validation and test results (see [Status](#status)).
 
 Design: [SPEC.md](SPEC.md) (v0.8). Every decision and finding, with its evidence:
 [docs/DECISIONS.md](docs/DECISIONS.md).
@@ -21,7 +21,7 @@ As of 2026-10-29.
 | Target definition | Fixed and checked against the operator's balance (below) |
 | Weather inputs | Reanalysis (ERA5) and 48-hour-lead forecasts (GFS) for 15 points, downloaded |
 | Feature table and baselines | Built: lags as known at the issue time, calendar, demand-weighted temperature; baseline errors in [`results/baselines.json`](results/baselines.json) |
-| Models, backtests | Decision sequence on the validation year; test year evaluated once (below) |
+| Models, backtests | Daily energy: decision sequence on the validation year, test year evaluated once, re-audit checks (below); daily peak deferred to v2 |
 | Forecasts, scoring, dashboard, continuous deployment | Not started |
 
 ## What is built
@@ -120,48 +120,73 @@ first fit (DECISIONS 2026-10-29).
 | 2. Training window | 3 years, 5 years, all (from 2018) | 5 years | 4.44 %, 4.27 %, 4.31 % (differences not significant) |
 | 3. Weather in training | reanalysis (ERA5) vs archived forecasts (GFS) | forecasts | 4.27 % vs 3.37 % (Diebold-Mariano p = 0.005) |
 
-Final configuration against the baselines on the 358 days where all exist
+Steps 1 and 2 ran with the model trained on reanalysis and fed with forecasts. The GFS
+forecast is warmer than the reanalysis (+0.80 °C on average, from −0.4 °C to +2.7 °C by
+city), so in evaluation the temperature change against the reference days was shifted by an
+amount never seen in training. That offset inflates exactly the linear degree-day part of the
+hybrid, which is why it failed step 1. Step 3 then chose forecasts in training, where the
+offset cancels. An external re-audit found this; the post-hoc checks below, with the rule for
+replacing the model written down before they ran (DECISIONS 2026-10-29), changed the model:
+
+| Post-hoc check (validation) | MAPE | Against the step-3 model |
+|---|---|---|
+| Trees, forecasts in training (step-3 model) | 3.37 % | — |
+| Hybrid, forecasts in training | 3.11 % | lower, p = 0.003; also better on 49 out-of-range hot days 2022–2025 (4.26 % vs 6.11 %) |
+| Trees, reanalysis with the offset corrected per city | 3.53 % | not different, p = 0.31 |
+| Hybrid, reanalysis with the offset corrected per city | 3.40 % | not different, p = 0.86 |
+
+The model is therefore the hybrid with forecasts in training and a 5-year window. With
+forecasts in training, 5 years is all the archived forecasts (from 2021-03-25), so the window
+and weather choices are not separable. The uncorrected offset cost about 0.9 points in
+step 3; with it corrected, training on reanalysis is still not better than training on
+forecasts.
+
+Model against the baselines on the 358 validation days where all exist
 ([`results/backtest/`](results/backtest)):
 
 | Forecast | MAPE | 95 % CI | Mean error (bias) | SD of error |
 |---|---|---|---|---|
-| Model (trees, 5 years, GFS) | 3.36 % | 3.04–3.76 % | +0.14 % | 4.41 % |
+| Model (hybrid, 5 years, GFS) | 3.09 % | 2.78–3.48 % | +0.07 % | 4.09 % |
 | Operator programme (B1) | 3.39 % | 3.02–3.80 % | +2.98 % | 3.05 % |
 | Same weekday, median of 4 weeks (B0) | 8.68 % | 7.47–10.26 % | +0.50 % | 11.47 % |
 
-The model matches the operator's day-ahead programme on average error (Diebold-Mariano
-p = 0.89) with almost no bias, but its errors are more spread out: the programme
-overestimates by about 3 % by design (security of supply) and is otherwise tighter.
-The model's errors remain correlated from one day to the next (0.44, against 0.20 for the
-programme), which points to information it does not yet use. Training on reanalysis and
-forecasting with forecast inputs costs about 0.9 percentage points; with reanalysis inputs
-on the forecast day (not available in production; step-1 configuration) the trees reach 2.81 %.
-
 ## Test results
 
-The test year 2025-10-01 → 2026-09-30 was evaluated once, after the configuration and the two
-success thresholds were fixed ([`results/test/test_evaluation.json`](results/test/test_evaluation.json)).
-The thresholds were set to be demanding.
+The test year 2025-10-01 → 2026-09-30 was evaluated once with the step-3 model (trees), after
+the configuration and the two success thresholds were fixed
+([`results/test/test_evaluation.json`](results/test/test_evaluation.json)). The thresholds were
+set to be demanding. The hybrid, adopted after the re-audit, was then scored on the same year;
+that year had already been seen, so its numbers are not a clean test
+([`results/test/test_evaluation_seen_hyb.json`](results/test/test_evaluation_seen_hyb.json)).
+The clean evaluation of the hybrid is the live forward test.
 
 | Forecast (362 days) | MAPE | 95 % CI | Mean error (bias) | SD of error |
 |---|---|---|---|---|
-| Model | 3.41 % | 3.06–3.75 % | −0.05 % | 4.39 % |
+| Trees (clean test) | 3.41 % | 3.06–3.75 % | −0.05 % | 4.39 % |
+| Hybrid (test year already seen) | 3.26 % | 2.92–3.61 % | +0.08 % | 4.23 % |
 | Operator programme | 3.09 % | 2.76–3.45 % | +2.72 % | 2.90 % |
 | Same weekday, median of 4 weeks | 8.26 % | 7.27–9.34 % | +0.12 % | 10.36 % |
 
-| Criterion | Target | Result | |
+| Criterion | Target | Trees (clean) | Hybrid (seen) |
 |---|---|---|---|
-| Skill against the 4-week median (1 − MAE ratio) | ≥ 0.50, CI above 0 | 0.59 (CI 0.54–0.65) | passed |
-| Not worse than the operator's programme by more than 0.5 points of MAPE | CI upper bound < +0.50 | +0.32 (CI −0.10 to +0.68) | failed |
+| Skill against the 4-week median (1 − MAE ratio) | ≥ 0.50, CI above 0 | 0.59 (CI 0.54–0.65), passed | 0.61 (CI 0.55–0.66), passed |
+| Not worse than the operator's programme by more than 0.5 points of MAPE | CI upper bound < +0.50 | +0.32 (CI −0.10 to +0.68), failed | +0.17 (CI −0.23 to +0.55), failed |
+| Skill against the operator's programme (reported, not a criterion) | — | −0.10 | −0.06 |
 
-The model is unbiased and 59 % better than the seasonal baseline. Against the operator's
-programme it is 0.32 points worse on average; the difference is not statistically
-significant (Diebold-Mariano p = 0.11), but the data cannot rule out a gap larger than the
-0.5-point margin, so the non-inferiority target is not met. The programme's errors are
-tighter (SD 2.90 % against 4.39 %) once its deliberate overestimate is set aside. The model
-beat the programme in one quarter of four (July–September 2026: 2.88 % against 3.18 %).
-Errors on the 9 out-of-range hot days: model 5.29 %, programme 4.41 %. Days with load
-shedding are not reported separately yet (no source list).
+The first criterion is a floor: the 4-week median is a weak baseline at a horizon of three or
+more days, so passing it only means a MAPE below about 4.5 %. Against the operator's programme
+both models are worse on average by a difference that is not statistically significant
+(Diebold-Mariano p = 0.11 and 0.39), but the data cannot rule out a gap larger than the
+0.5-point margin, so the non-inferiority target is not met. The comparison is not on equal
+terms: the programme is published about 11 hours after the model's issue time (about 21:30 on
+the day before, against 10:00) and uses the operator's real-time operating data, while the
+newest actual the model sees is three or more days old. Once its deliberate overestimate (about
+3 %) is set aside, the programme's errors are tighter (SD 2.90 % against 4.2–4.4 %). Both
+models beat it in one quarter of four (July–September 2026). On the 9 out-of-range hot days:
+trees 5.29 %, hybrid 5.02 %, programme 4.41 %; this comparison is provisional, because days
+with load shedding are not yet listed (no source).
+
+The model forecasts daily energy only; the daily peak is deferred to v2.
 
 ## Repository layout
 
@@ -188,6 +213,7 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/).
     uv run python scripts/build_features.py
     uv run python scripts/backtest.py --step family    # then --step window, --step weather
     uv run python scripts/evaluate_test.py             # once; refuses if its output exists
+    uv run python scripts/sensitivity.py               # re-audit checks (validation)
 
 Deploying the collector: `terraform -chdir=infra init`, `plan`, `apply` with an AWS
 profile and the variables in `infra/terraform.tfvars.example`.

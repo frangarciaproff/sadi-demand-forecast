@@ -7,12 +7,18 @@ Thresholds S1 and S2 fixed in SPEC 5 before this script was run.
 The test is evaluated once: the script refuses to run if its output exists.
 Writes results/test/test_evaluation.json; daily forecasts to data/interim/test/.
 
+Re-audit 2026-10-29: --family hyb evaluates the replacement v1 (F-hyb, same window and
+weather) on the same year, written to test_evaluation_seen_hyb.json and marked as a
+test year already seen (DECISIONS 2026-10-29). Same once-only rule.
+
 Usage:
     uv run python scripts/evaluate_test.py
+    uv run python scripts/evaluate_test.py --family hyb
 """
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import sys
@@ -45,11 +51,19 @@ def first_daily_reports(days: list[dt.date]) -> pd.DataFrame:
     return first.set_index("date")[["value_mwh", "valid"]]
 
 
-def main() -> int:
-    if OUT.exists():
-        print(f"{OUT} exists: the test is evaluated once. Not running.")
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--family", choices=["tree", "hyb"])
+    args = p.parse_args(argv)
+    out = (
+        OUT
+        if args.family is None
+        else OUT.with_name(f"test_evaluation_seen_{args.family}.json")
+    )
+    if out.exists():
+        print(f"{out} exists: the test is evaluated once. Not running.")
         return 1
-    family = read_step("step1_family")["decision"]["family"]
+    family = args.family or read_step("step1_family")["decision"]["family"]
     window = read_step("step2_window")["decision"]["window"]
     source = read_step("step3_weather")["decision"]["weather_source"]
     f = pd.read_parquet(INTERIM / "features_daily.parquet")
@@ -62,6 +76,7 @@ def main() -> int:
 
     result: dict[str, Any] = {
         "configuration": {"family": family, "window": window, "weather": source},
+        "test_year_already_seen": args.family is not None,
         "period": [TEST_START, TEST_END],
         "forecast_days": len(model),
         "definitive": compare(preds, tf),
@@ -129,10 +144,10 @@ def main() -> int:
         },
     }
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(result, indent=2, default=str) + "\n", encoding="utf-8")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, indent=2, default=str) + "\n", encoding="utf-8")
     (INTERIM / "test").mkdir(parents=True, exist_ok=True)
-    pd.concat(preds, axis=1).to_parquet(INTERIM / "test" / "test_forecasts.parquet")
+    pd.concat(preds, axis=1).to_parquet(INTERIM / "test" / f"{out.stem}.parquet")
     print(json.dumps(result, indent=2, default=str))
     return 0
 

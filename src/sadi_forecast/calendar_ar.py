@@ -31,12 +31,18 @@ def day_kind(dates: Iterable[dt.date]) -> pd.Series:
         name = cal.get(d)
         if name is None:
             kind = "eve" if (d.month, d.day) in ((12, 24), (12, 31)) else ""
-        elif BRIDGE_NAME in name:
-            kind = "bridge"
-        elif any(n in name for n in NON_WORKING_NAMES):
-            kind = "non_working"
         else:
-            kind = "holiday"
+            # Several holidays on one date are joined with "; " (e.g. 2026-04-02,
+            # Malvinas and Holy Thursday): the strongest category wins.
+            kinds = set()
+            for part in name.split("; "):
+                if BRIDGE_NAME in part:
+                    kinds.add("bridge")
+                elif any(n in part for n in NON_WORKING_NAMES):
+                    kinds.add("non_working")
+                else:
+                    kinds.add("holiday")
+            kind = next(k for k in ("holiday", "bridge", "non_working") if k in kinds)
         out[d] = kind
     return pd.Series(out, name="day_kind")
 

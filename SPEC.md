@@ -2,7 +2,9 @@
 
 Status: v0.8 (2026-10-29). v0.8: D8 summation excludes YACYHIPY; validation decision sequence
 run (family F-tree, window 5 years, weather M-fc; DECISIONS 2026-10-29); O15 narrowed; S1/S2
-thresholds fixed; test evaluated once (S1 passed, S2 failed; DECISIONS 2026-10-29).
+thresholds fixed; test evaluated once (S1 passed, S2 failed; DECISIONS 2026-10-29). Re-audit:
+post-hoc checks replaced F-tree by F-hyb (v1 = F-hyb, 5 years, M-fc; its test score is on a test
+year already seen); T2 deferred to v2.
 v0.7 (2026-10-29), frozen until backtest results. v0.7 applies the 2026-10-29 audit
 (label embargo in refits, backtest start, four-week reference level, scoring caveats, S4).
 v0.6: target definition and source, live data handling. Where docs/method_notes.md (written
@@ -21,7 +23,8 @@ v1 targets, for calendar day D (Argentina time, ART = UTC-03:00), on supplied en
                   = local demand + transmission losses + pumping   (exact; DECISIONS 2026-10-26)
 
 - T1: daily supplied energy E(D), GWh.
-- T2: daily peak P(D), MW, defined as the maximum of the 24 hourly supplied energies.
+- T2: daily peak P(D), MW, defined as the maximum of the 24 hourly supplied energies. Deferred to
+  v2 (ROADMAP F14, DECISIONS 2026-10-29); all v1 results are T1.
 
 Pumping is included (Fran, 2026-10-26): it is energy the system supplied, and from 2024 it is not
 published separately, so excluding it would require an estimate.
@@ -213,6 +216,8 @@ with three years of history). The test is not used for this choice.
 Thresholds are derived from validation-period measurements (B0 and B1 errors 2024-10 → 2025-09)
 and fixed, with their derivation, before the test is evaluated. Structure:
 - S1: skill vs B0 on test (1 − MAE_model / MAE_B0) ≥ 0.50 and the lower bound of its 95 % CI > 0.
+  B0 is weak at a horizon of 3+ days (MAPE 8–9 %), so S1 only requires MAPE below about 4.5 %; it is
+  a floor, not evidence of a good model. Skill vs B1 is reported next to it (not a criterion).
   Validation: 0.62 (CI 0.55–0.67), quarters 0.53–0.69 (MAPE-based); 0.50 sits below the worst quarter and the
   CI lower bound, leaving room for a different year (the CI covers sampling within one year only).
 - S2: non-inferiority to B1: upper bound of the 95 % CI of MAPE_model − MAPE_B1 on test < +0.50
@@ -266,7 +271,8 @@ extra weather variables, public API, conversational interface, redistribution of
 ## 9. Review points
 
 - R0 (2026-10-30): PC vs AWS collection comparison; decommission PC tasks.
-- R1 (end of validation decisions, 4.3 steps 1–3): freeze features, flagged days, thresholds.
+- R1 (end of validation decisions, 4.3 steps 1–3): freeze features and thresholds. No days are
+  excluded from training or scoring (the 2019-06-16 blackout is in the training targets).
 - R2 (test evaluated once).
 - R5 (30 days of live forecasts): ROADMAP items F9–F11.
 

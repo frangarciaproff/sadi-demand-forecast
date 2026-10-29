@@ -15,6 +15,8 @@ Moving a line into scope requires a SPEC change and a DECISIONS.md entry.
 | F6 | Deep learning models | Small tabular data; trees first | Only if tree models plateau |
 | F7 | Alternative NWP model (ECMWF IFS) or multi-model inputs | GFS is the only archive covering 2021–2023 | When ECMWF archive ≥ 3 years |
 | F8 | Latest-run-at-issue-time weather inputs (Single Runs API) instead of fixed 48 h lead | Needs archive check (C2b); fixed lead is consistent and simpler | After v1 test |
+| F14 | T2: daily peak P(D) (max of hourly supplied energy) | Needs the hourly target (O16) and its own decision sequence; the test year has already been seen for T1, so a T2 test on it would not be clean (re-audit 2026-10-29) | Evaluated on the forward test only |
+| F15 | Holiday check at issue time: short-notice national holidays (e.g. 2022-12-20, declared 2022-12-19) and provincial holidays on different days | The `holidays` package encodes holidays as known today; few days affected: in the package's list the only extraordinary national holidays 2018 → 2026-09 are 2022-05-18 (census, decreed months ahead) and 2022-12-20 (World Cup, decreed the day before), both in training | v2 |
 | F13 | Same-information operator benchmark: CAMMESA Programación Semanal (multi-day forecasts published before the 10:00 ART D-1 issue time) | v1 compares against the day-ahead programme (B1), published after issue time | After v1 test |
 
 ## Production and tooling
