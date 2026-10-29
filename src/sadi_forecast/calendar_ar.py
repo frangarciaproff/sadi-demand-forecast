@@ -25,7 +25,9 @@ def day_kind(dates: Iterable[dt.date]) -> pd.Series:
     """Holiday category per date ('' for ordinary days)."""
     dates = list(dates)
     years = sorted({d.year for d in dates})
-    cal = holidays.country_holidays("AR", years=years)
+    # Names are matched in Spanish. Without an explicit language the package
+    # translates them from the system locale (LANG etc.), e.g. "Maundy Thursday".
+    cal = holidays.country_holidays("AR", years=years, language="es")
     out = {}
     for d in dates:
         name = cal.get(d)

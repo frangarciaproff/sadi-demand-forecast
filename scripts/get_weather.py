@@ -5,6 +5,12 @@ Sources:
     gfs_prev Previous Runs API, model gfs_global, forecasts issued 1 and 2 days before
              (variables *_previous_day1/2), 2021-03-24 -> yesterday
 
+Live mode (--live): for the forecast issued today, one request per point to the
+Previous Runs API for the last 32 days and the next 2, variable
+temperature_2m_previous_day2 only (the value forecast 48 h before each valid hour, the
+same input the model was trained and tested on; DECISIONS 2026-10-29). Saved to
+data/raw/open_meteo/gfs_live/<point>/<issue date>.json.
+
 One request per (source, point, calendar year); timestamps in UTC. Raw responses go to
 data/raw/open_meteo/<source>/<point>/<year>.json. Closed years are downloaded once;
 the current year is stored as <year>_partial.json and refreshed on every run.
@@ -16,6 +22,7 @@ Data: Open-Meteo.com, CC BY 4.0.
 
 Usage (from the repository root):
     uv run python scripts/get_weather.py [--sources era5 gfs_prev] [--points caba ...]
+    uv run python scripts/get_weather.py --live
 """
 
 from __future__ import annotations
@@ -70,6 +77,12 @@ SOURCES: dict[str, dict[str, object]] = {
 }
 
 
+LIVE_URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
+LIVE_VARS = ("temperature_2m_previous_day2",)
+LIVE_PAST_DAYS = 32
+LIVE_FORECAST_DAYS = 3  # today (UTC), the target day and the next (ART is UTC-3)
+
+
 class DailyLimitError(RuntimeError):
     pass
 
@@ -88,6 +101,47 @@ def build_url(source: str, point: Point, start: dt.date, end: dt.date) -> str:
         "timezone": "GMT",
     }
     return f"{cfg['url']}?{urllib.parse.urlencode(params)}"
+
+
+def live_url(point: Point) -> str:
+    params = {
+        "latitude": f"{point.lat:.4f}",
+        "longitude": f"{point.lon:.4f}",
+        "hourly": ",".join(LIVE_VARS),
+        "models": "gfs_global",
+        "past_days": str(LIVE_PAST_DAYS),
+        "forecast_days": str(LIVE_FORECAST_DAYS),
+        "timezone": "GMT",
+    }
+    return f"{LIVE_URL}?{urllib.parse.urlencode(params)}"
+
+
+def fetch_live(points: list[Point], pause: float) -> int:
+    """Live inputs for the forecast issued today (Argentina date)."""
+    now = dt.datetime.now(dt.UTC)
+    issue_date = (now - dt.timedelta(hours=3)).date()
+    failures = []
+    for pt in points:
+        path = OUT_DIR / "gfs_live" / pt.key / f"{issue_date.isoformat()}.json"
+        try:
+            data = json.loads(fetch(live_url(pt)))
+            values = data.get("hourly", {}).get(LIVE_VARS[0], [])
+            missing = sum(v is None for v in values)
+            data["_request"] = {
+                "point": pt._asdict(),
+                "source": "gfs_live",
+                "issue_date": issue_date.isoformat(),
+                "fetched_utc": now.isoformat(timespec="seconds"),
+            }
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data), encoding="utf-8")
+            print(f"{pt.key}: ok, {len(values)} hours, {missing} missing")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            print(f"{pt.key}: FAILED {exc}")
+            failures.append(pt.key)
+        time.sleep(pause)
+    print(f"RUN SUMMARY: {len(failures)} failure(s) {failures}")
+    return 1 if failures else 0
 
 
 def year_ranges(
@@ -136,8 +190,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sources", nargs="+", choices=list(SOURCES), default=list(SOURCES))
     p.add_argument("--points", nargs="+", choices=[pt.key for pt in POINTS])
     p.add_argument("--pause", type=float, default=PAUSE_S, help="seconds between calls")
+    p.add_argument("--live", action="store_true", help="inputs for today's forecast")
     args = p.parse_args(argv)
     points = [pt for pt in POINTS if not args.points or pt.key in args.points]
+    if args.live:
+        return fetch_live(points, pause=min(args.pause, 2.0))
     today = dt.datetime.now(dt.UTC).date()
 
     jobs = []

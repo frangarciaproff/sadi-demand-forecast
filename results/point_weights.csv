@@ -1,16 +1,16 @@
 point,weight,provinces
-caba,0.37593,buenos aires (GBA 0.759)
-rosario,0.093,santa fe
-cordoba,0.0754,cordoba
-bahia_blanca,0.06644,"buenos aires (BAS), la pampa"
-mar_del_plata,0.05983,buenos aires (BAS)
-mendoza,0.05641,"mendoza, san luis"
-resistencia,0.0544,"chaco, corrientes, formosa"
-tucuman,0.0462,"catamarca, sgo.del estero, tucuman"
-comodoro,0.04213,"chubut, santa cruz"
-neuquen,0.03054,"neuquen, rio negro"
-san_juan,0.02839,"la rioja, san juan"
-santa_fe,0.02799,entre rios
-salta,0.02414,"jujuy, salta"
-posadas,0.01919,misiones
-la_plata,0.0,
+caba,0.37593166335685024,buenos aires (GBA 0.759)
+rosario,0.092997820531363407,santa fe
+cordoba,0.07539782924245457,cordoba
+bahia_blanca,0.066442313556263385,"buenos aires (BAS), la pampa"
+mar_del_plata,0.059828653859810968,buenos aires (BAS)
+mendoza,0.056409466205439185,"mendoza, san luis"
+resistencia,0.054404923228801624,"chaco, corrientes, formosa"
+tucuman,0.046201361077544981,"catamarca, sgo.del estero, tucuman"
+comodoro,0.042130793011435352,"chubut, santa cruz"
+neuquen,0.030540007784464973,"neuquen, rio negro"
+san_juan,0.028387811846726375,"la rioja, san juan"
+santa_fe,0.027988993794405448,entre rios
+salta,0.024144205407809052,"jujuy, salta"
+posadas,0.01919415709663061,misiones
+la_plata,0,

@@ -22,7 +22,8 @@ As of 2026-10-29.
 | Weather inputs | Reanalysis (ERA5) and 48-hour-lead forecasts (GFS) for 15 points, downloaded |
 | Feature table and baselines | Built: lags as known at the issue time, calendar, demand-weighted temperature; baseline errors in [`results/baselines.json`](results/baselines.json) |
 | Models, backtests | Daily energy: decision sequence on the validation year, test year evaluated once, re-audit checks (below); daily peak deferred to v2 |
-| Forecasts, scoring, dashboard, continuous deployment | Not started |
+| Forecasts | Local pipeline: training, live inputs, one-day forecast (checked against the training table); AWS not started |
+| Scoring, dashboard, continuous deployment | Not started |
 
 ## What is built
 
@@ -214,6 +215,20 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/).
     uv run python scripts/backtest.py --step family    # then --step window, --step weather
     uv run python scripts/evaluate_test.py             # once; refuses if its output exists
     uv run python scripts/sensitivity.py               # re-audit checks (validation)
+
+Daily forecast, locally (after the collector's documents run):
+
+    uv run python scripts/build_tables.py --only d6 d8
+    uv run python scripts/get_weather.py --live
+    uv run python scripts/forecast.py                  # tomorrow; data/forecasts/<day>.json
+
+Monthly, after the Síntesis base of the previous month is out (about the 20th):
+
+    uv run python scripts/get_sintesis.py --discover
+    uv run python scripts/get_weather.py --sources gfs_prev
+    uv run python scripts/build_tables.py --only d6 d7 d8
+    uv run python scripts/build_features.py
+    uv run python scripts/train_model.py
 
 Deploying the collector: `terraform -chdir=infra init`, `plan`, `apply` with an AWS
 profile and the variables in `infra/terraform.tfvars.example`.

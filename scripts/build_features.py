@@ -29,7 +29,7 @@ INTERIM = ROOT / "data" / "interim"
 RAW_WEATHER = ROOT / "data" / "raw" / "open_meteo"
 TRAIN_WEIGHTS = (dt.date(2019, 1, 1), dt.date(2024, 9, 30))  # province sheet from 2019
 FIRST_DAY = dt.date(2018, 1, 1)
-LAST_DAY = dt.date(2026, 9, 30)
+LAST_DAY = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=3)).date()  # today, ART
 WEATHER_COLUMNS = {
     "era5": "temperature_2m",
     "gfs": "temperature_2m_previous_day2",
@@ -53,7 +53,7 @@ def main() -> int:
     weights = point_weights(provinces, d5, *TRAIN_WEIGHTS)
     out = ROOT / "results"
     out.mkdir(parents=True, exist_ok=True)
-    weights.round(5).to_csv(out / "point_weights.csv", index_label="point")
+    weights.to_csv(out / "point_weights.csv", index_label="point", float_format="%.17g")
     logging.info("weights:\n%s", weights.round(4).to_string())
 
     weather = {}

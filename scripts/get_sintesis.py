@@ -8,8 +8,15 @@ between publications can be measured.
 Files go to data/raw/cammesa/sintesis/<base>.zip and are never overwritten.
 A manifest line per download is appended to data/raw/cammesa/sintesis/manifest.jsonl.
 
+New bases are found with --discover: the yearly pages
+/historico-sintesis-mensual-<year>/ (this year and the previous one) are read and every
+link to a "base informe mensual" package is added to data/raw/cammesa/sintesis/
+registry.json, which extends BASES. A month's base is published about the 20th of the
+next month (SPEC 4.1).
+
 Usage (from the repository root):
-    py -3 scripts/get_sintesis.py            # all bases in BASES
+    py -3 scripts/get_sintesis.py            # all bases in BASES and the registry
+    py -3 scripts/get_sintesis.py --discover # find new bases, then download them
     py -3 scripts/get_sintesis.py --list     # show the registry and what is on disk
 """
 
@@ -19,6 +26,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -46,6 +54,56 @@ BASES: dict[str, str] = {
 }
 
 
+REGISTRY = OUT_DIR / "registry.json"
+YEAR_PAGE = SITE + "historico-sintesis-mensual-{year}/"
+LINK_RE = re.compile(
+    r"(download/base[-_]informe[-_]mensual[-_](\d{4})-(\d{2})/?\?wpdmdl=\d+)", re.I
+)
+
+
+def find_bases(html: str) -> dict[str, str]:
+    """base label (YYYY-MM) -> download path, from a yearly Síntesis page."""
+    out: dict[str, str] = {}
+    for path, year, month in LINK_RE.findall(html):
+        out.setdefault(f"{year}-{month}", path)
+    return out
+
+
+def registry() -> dict[str, str]:
+    found: dict[str, str] = {}
+    if REGISTRY.exists():
+        found = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    return {**found, **BASES}
+
+
+def discover(years: list[int]) -> dict[str, str]:
+    """Read the yearly pages and store new bases in the registry."""
+    known = registry()
+    new: dict[str, str] = {}
+    for year in years:
+        try:
+            html = _fetch(YEAR_PAGE.format(year=year)).decode("utf-8", "replace")
+        except RuntimeError as exc:
+            print(f"{year}: page not read ({exc})")
+            continue
+        bases = find_bases(html)
+        print(f"{year}: {len(bases)} base links")
+        new.update({b: p for b, p in bases.items() if b not in known})
+    if new:
+        stored = (
+            json.loads(REGISTRY.read_text(encoding="utf-8"))
+            if REGISTRY.exists()
+            else {}
+        )
+        stored.update(new)
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        REGISTRY.write_text(
+            json.dumps(stored, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    print(f"new bases: {sorted(new) or 'none'}")
+    return new
+
+
 def _target(base: str) -> Path:
     return OUT_DIR / f"base_informe_mensual_{base}.zip"
 
@@ -69,7 +127,8 @@ def download(base: str) -> str:
     path = _target(base)
     if path.exists():
         return "exists"
-    body = _fetch(SITE + BASES[base])
+    url = SITE + registry()[base]
+    body = _fetch(url)
     tmp = path.with_suffix(".part")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     tmp.write_bytes(body)
@@ -83,7 +142,7 @@ def download(base: str) -> str:
     tmp.replace(path)
     rec = {
         "base": base,
-        "url": SITE + BASES[base],
+        "url": url,
         "file": path.name,
         "bytes": len(body),
         "sha256": hashlib.sha256(body).hexdigest(),
@@ -100,13 +159,20 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("--list", action="store_true", help="show registry and disk state")
+    p.add_argument("--discover", action="store_true", help="look for new bases first")
     args = p.parse_args(argv)
+    if args.discover:
+        this_year = dt.date.today().year
+        discover([this_year - 1, this_year])
+    bases = registry()
     if args.list:
-        for base in BASES:
+        for base in sorted(bases):
             print(base, "on disk" if _target(base).exists() else "missing")
         return 0
     failures: list[str] = []
-    for base in BASES:
+    for base in sorted(bases):
+        if _target(base).exists():
+            continue
         print(f"{base}: downloading...")
         try:
             print(f"{base}: {download(base)}")

@@ -55,5 +55,5 @@ testpaths = ["tests"]
 pythonpath = ["src", "scripts", "infra/lambda"]
 
 [[tool.mypy.overrides]]
-module = ["scipy.*", "sklearn.*"]
+module = ["scipy.*", "sklearn.*", "joblib.*"]
 ignore_missing_imports = true
